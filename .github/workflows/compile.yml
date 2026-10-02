@@ -26,17 +26,22 @@ jobs:
 
     - name: Generate Xcode Project and Files
       run: |
-        # 1. Provide the mandatory base game assets for compilation
-        mkdir -p build
+        # 1. Create structure folders safely
+        mkdir -p build/us_pc build/us_ios
         touch baserom.us.z64
         
-        # 2. Run the platform configuration script to generate the .xcodeproj context
+        # 2. Patch Makefile preprocessing issues specific to macOS Clang
+        # Changes spacing issues like '-I .' or '-I.' to be parsed explicitly by the linker tool
+        find . -name "Makefile*" -type f -exec sed -i '' 's/-I \./-I\./g' {} +
+        find . -name "*.split" -type f -exec sed -i '' 's/-I \./-I\./g' {} +
+
+        # 3. Explicitly generate the Xcode definitions for the mobile SDK environment
         if [ -f "./build_ios.sh" ]; then
           chmod +x ./build_ios.sh
           ./build_ios.sh
         else
-          # Fallback generation rule using the Makefile engine to construct build headers
-          make TARGET_IOS=1 TARGET_APPLE=1 xcode
+          # Fallback forcing mobile configuration variables flags
+          make TARGET_IOS=1 TARGET_APPLE=1 xcode || make TARGET_IOS=1 TARGET_APPLE=1
         fi
 
     - name: Build with xcodebuild
@@ -50,14 +55,13 @@ jobs:
         fi
         echo "Compiling generated architecture at: $XCODE_PATH"
 
-        # Determine type parameters flags
         if [[ "$XCODE_PATH" == *".xcworkspace"* ]]; then
           BUILD_FLAG="-workspace $XCODE_PATH"
         else
           BUILD_FLAG="-project $XCODE_PATH"
         fi
 
-        # Build application target context (ImGui layout, virtual pads, widgets)
+        # Compile the payload target framework (links ImGui configurations and screen controllers)
         xcodebuild $BUILD_FLAG \
                    -scheme "saturn" \
                    -configuration Release \
@@ -71,7 +75,7 @@ jobs:
       run: |
         mkdir -p Payload
         
-        # Locate the compiled bundle produced inside the configuration directory
+        # Locate the application binary compiled inside build subdirectories
         APP_BUNDLE=$(find build/ -type d -name "*.app" | head -n 1)
         
         if [ -z "$APP_BUNDLE" ]; then
