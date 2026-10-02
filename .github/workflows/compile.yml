@@ -2,7 +2,7 @@ name: Generate Xcode Project & Build iOS (IPA)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "legacy" ]
   workflow_dispatch:
 
 jobs:
@@ -27,23 +27,21 @@ jobs:
     - name: Generate Xcode Project and Files
       run: |
         # 1. Provide the mandatory base game assets for compilation
-        # Bypasses or satisfies asset extraction using dummy/empty generation rules if a real ROM isn't injected
         mkdir -p build
         touch baserom.us.z64
         
         # 2. Run the platform configuration script to generate the .xcodeproj context
-        # (This matches the standard 'build_ios.sh' setup framework used by ports)
         if [ -f "./build_ios.sh" ]; then
           chmod +x ./build_ios.sh
           ./build_ios.sh
         else
-          # Fallback generation rule using the Makefile fallback engine to construct build headers
+          # Fallback generation rule using the Makefile engine to construct build headers
           make TARGET_IOS=1 TARGET_APPLE=1 xcode
         fi
 
     - name: Build with xcodebuild
       run: |
-        # Dynamically locate the generated .xcodeproj or .xcworkspace structure
+        # Dynamically locate the generated .xcworkspace or .xcodeproj structure
         XCODE_PATH=$(find . -name "*.xcworkspace" -o -name "*.xcodeproj" | head -n 1)
         
         if [ -z "$XCODE_PATH" ]; then
@@ -87,5 +85,5 @@ jobs:
     - name: Upload Finished IPA
       uses: actions/upload-artifact@v4
       with:
-        name: saturn-xcode-iOS
+        name: saturn-xcode-iOS-legacy
         path: saturn.ipa
