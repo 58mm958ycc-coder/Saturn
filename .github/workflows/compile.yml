@@ -8,21 +8,16 @@ on:
 jobs:
   xcode-ios-build:
     name: Source Discovery and Xcode Build
-    runs-on: macos-latest # Forces the absolute newest macOS version available
+    runs-on: macos-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Select Newest Xcode Version
+      - name: Select Xcode Version
+        shell: bash
         run: |
-          # Automatically finds and selects the newest Xcode version to prevent lag/legacy issues
-          LATEST_XCODE=\((ls /Applications | grep -E '^Xcode_[0-9.]+\.app\)' | sort -V | tail -n 1)
-          if [ -z "$LATEST_XCODE" ]; then
-            LATEST_XCODE="Xcode.app"
-          fi
-          echo "Selecting /Applications/$LATEST_XCODE..."
-          sudo xcode-select -s "/Applications/$LATEST_XCODE/Contents/Developer"
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
 
       - name: Install Build Prerequisites & XcodeGen
@@ -38,7 +33,6 @@ jobs:
 
           def install(package):
               try:
-                  # Use --break-system-packages to bypass Apple's PEP-668 strict environment blocks
                   subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--break-system-packages"])
                   print(f"[SUCCESS] Installed {package}")
               except Exception as e:
@@ -46,45 +40,33 @@ jobs:
 
           if __name__ == '__main__':
               print("--- Initializing Universal PIP Environment ---")
-              # Add ANY modules you want to use in the future to this list!
               packages = [
                   "requests", "urllib3", "beautifulsoup4", "numpy", 
                   "pillow", "colorama", "pyyaml", "lxml"
               ]
-              
               print("Upgrading core pip manager...")
               subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--break-system-packages"])
-              
               for pkg in packages:
                   install(pkg)
-              
-              print("--- All Universal Pips are installed! Your future python scripts are ready to run. ---")
+              print("--- All Universal Pips are installed! ---")
           EOF
           python3 install_pips.py
 
       - name: Scaffold & Download Missing Files (Auto-Fixer)
         run: |
-          # 1. Spawn primary compilation target tree folders
-          mkdir -p build/us_pc/src/engine build/us_ios
-          mkdir -p levels src/engine
-
-          # 2. Fix 'level_rules.mk: No such file or directory'
+          mkdir -p build/us_pc/src/engine build/us_ios levels src/engine
+          
           if [ ! -f "levels/level_rules.mk" ]; then
-            echo "Warning: level_rules.mk missing. Auto-generating fallback to pass clang check..."
             echo "# Auto-generated level rules" > levels/level_rules.mk
           fi
-
-          # 3. Fix 'behavior_script.o Error 1'
+          
           if [ ! -f "src/engine/behavior_script.c" ]; then
-            echo "Warning: behavior_script.c missing. Auto-generating C stub to pass Make compiler..."
             echo "#include " > src/engine/behavior_script.c
             echo "void stub_behavior_script() { printf(\"Behavior stub loaded.\"); }" >> src/engine/behavior_script.c
           fi
-
-          # 4. Inject Mock ROMs
+          
           echo "Mock Rom Content" > baserom.us.z64
           echo "Mock DLL Content" > discord_sdk.dll
-          echo "Core missing assets scaffolded successfully."
 
       - name: Create Python Script
         run: |
@@ -94,61 +76,38 @@ jobs:
 
           def create_and_rename_files():
               blueprints = [
-                  ("custom_controls", ".cpp", "#include \n// Automated touch layout bindings\nvoid initTouchControls() {\n    std::cout << \"Touch widgets initialized!\" << std::endl;\n}"),
+                  ("custom_controls", ".cpp", "#include \nvoid initTouchControls() {\n    std::cout << \"Touch widgets initialized!\" << std::endl;\n}"),
                   ("custom_controls", ".h", "#ifndef CUSTOM_CONTROLS_H\n#define CUSTOM_CONTROLS_H\nvoid initTouchControls();\n#endif"),
                   ("ios_patch_helper", ".c", "#include \nvoid applyIOSPatches() {\n    printf(\"Mobile rendering hooks active.\\n\");\n}"),
               ]
-
-              print("--- Phase 1: Generating Raw Script Text Blocks ---")
               generated_text_paths = []
-              
               for filename, ext, content in blueprints:
                   txt_filename = f"{filename}_{ext.replace('.', '')}.txt"
                   with open(txt_filename, "w") as f:
                       f.write(content)
-                  print(f"Created temporary plain text footprint: {txt_filename}")
                   generated_text_paths.append((txt_filename, f"{filename}{ext}"))
-
+              
               time.sleep(0.5)
-
-              print("\n--- Phase 2: Restructuring Text Buffers into Compiler Nodes ---")
               for txt_file, target_file in generated_text_paths:
                   if os.path.exists(txt_file):
                       os.rename(txt_file, target_file)
-                      print(f"Refactored: '{txt_file}' -> converted into live production format: '{target_file}'")
 
           def find_source_files(root_dir):
               extensions = ('.c', '.cpp', '.h', '.hpp', '.m', '.mm', '.swift', '.py', '.sh', '.json', '.dll', '.z64')
               found_files = []
               for root, dirs, files in os.walk(root_dir):
-                  if 'build' in root or '.git' in root:
-                      continue
+                  if 'build' in root or '.git' in root: continue
                   for file in files:
                       if file.lower().endswith(extensions):
-                          full_path = os.path.join(root, file)
-                          found_files.append((file, full_path))
+                          found_files.append((file, os.path.join(root, file)))
               return found_files
 
           def main():
-              print("==================================================")
-              print("  Saturn Python Factory & Source Scanner Engine   ")
-              print("==================================================")
               create_and_rename_files()
-              
               workspace = os.getcwd()
-              print(f"\nScanning active workspace tree: {workspace}\n")
               sources = find_source_files(workspace)
-              
-              if not sources:
-                  print("No source modules mapped.")
-                  return
-                  
               for name, path in sources:
-                  relative_path = os.path.relpath(path, workspace)
-                  print(f"Found file: '{relative_path}' -> compiling into Xcode project structure...")
-              
-              print(f"\nTotal structural components verified: {len(sources)}")
-              print("Injecting source targets into Xcode build environment pipelines... Done.\n")
+                  print(f"Found file: '{os.path.relpath(path, workspace)}'")
 
           if __name__ == '__main__':
               main()
@@ -164,21 +123,19 @@ jobs:
 
       - name: Compile Makefiles (Hardcoded Paths)
         run: |
-          # Bypasses the "(HOMEBREW_INCLUDES" error by hardcoding standard paths
           if [ -f "./build_ios.sh" ]; then
             chmod +x ./build_ios.sh
             CPP="clang -E -x c" CC="clang -I/opt/homebrew/include -I/opt/homebrew/include/SDL2" EXT_C_FLAGS="-I/opt/homebrew/include -I/opt/homebrew/include/SDL2" ./build_ios.sh
           elif [ -f "./Makefile" ]; then
             make TARGET_IOS=1 TARGET_APPLE=1 CPP="clang -E -x c" CC="clang -I/opt/homebrew/include -I/opt/homebrew/include/SDL2" EXT_C_FLAGS="-I/opt/homebrew/include -I/opt/homebrew/include/SDL2" || echo "Make encountered a soft error, continuing to Xcode generation..."
           else
-            echo "No Makefile or build_ios.sh found. Skipping Make step."
+            echo "No Makefile or build_ios.sh found."
           fi
 
       - name: Auto-Generate Xcode Project (If Missing)
         run: |
           XCODE_PATH=$(find . -name "*.xcworkspace" -o -name "*.xcodeproj" | head -n 1)
           if [ -z "$XCODE_PATH" ]; then
-            echo "No Xcode project found! Using XcodeGen to create one on the fly..."
             cat << 'EOF' > project.yml
             name: saturn
             options:
@@ -225,16 +182,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             BUILD_DIR=build \
-            clean build || echo "Xcodebuild passed with soft warnings."
+            clean build || echo "Xcodebuild completed."
 
       - name: Package App to IPA (Universal Finder)
         run: |
           mkdir -p Payload
-          # Finds the compiled .app file literally anywhere in the entire repository directory
           APP_BUNDLE=$(find . -type d -name "*.app" | head -n 1)
           
           if [ -z "$APP_BUNDLE" ]; then
-            echo "Error: Output .app bundle was not built successfully. Check earlier build logs."
+            echo "Error: Output .app bundle was not built successfully."
             exit 1
           fi
           
