@@ -1,112 +1,33 @@
-name: iOS Intelligent Auto-Fix Pipeline
+name: Auto-Compile iOS App
 
 on:
   push:
-    branches: [ "legacy", "main" ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  # =========================================================
-  # JOB 1: WINDOWS SERVER (DOWNLOADS ZIP & GENERATES ASSETS)
-  # =========================================================
-  windows-asset-generator:
-    name: Generate DynOS Packs (Windows)
-    runs-on: windows-latest
-    
-    steps:
-      - name: Download & Extract Saturn Windows Release
-        shell: powershell
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/Llennpie/Saturn/releases/download/saturn-legacy-2.5/saturn-14-windows.zip" -OutFile "saturn.zip"
-          Expand-Archive -Path "saturn.zip" -DestinationPath "saturn_win"
-          
-      - name: Run Executable to Generate Assets
-        shell: powershell
-        run: |
-          cd saturn_win
-          $exe = Get-ChildItem -Filter "*.exe" | Select-Object -First 1
-          if ($exe) {
-              Write-Host "Running \((\)exe.Name) for 10 seconds to generate DynOS packs..."
-              Start-Process -FilePath $exe.FullName
-              Start-Sleep -Seconds 10
-              Stop-Process -Name $exe.BaseName -Force -ErrorAction SilentlyContinue
-          } else {
-              Write-Host "No executable found in the zip!"
-          }
-          
-      - name: Upload Generated Assets to Relay Stash
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-generated-assets
-          path: saturn_win/
-
-  # =========================================================
-  # JOB 2: MACOS SERVER (MERGES ASSETS & COMPILES IOS APP)
-  # =========================================================
-  validate-and-build:
-    name: Auto-Patch, Validate, and Build iOS App
+  build-ios:
     runs-on: macos-latest
-    needs: windows-asset-generator # This tells GitHub to wait for the Windows server to finish!
-    
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Set up Homebrew & Install Dependencies
+        run: |
+          brew install xcodegen sdl2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          submodules: recursive
-          fetch-depth: 0
+          python-version: '3.11'
 
-      - name: Download Assets from Windows Server
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-generated-assets
-          path: windows_assets
-
-      - name: Merge Windows Assets into Mac Workspace
-        shell: bash
+      - name: Run Auto-Validator & Build Pipeline
         run: |
-          echo "Merging files from Windows into our iOS build directory..."
-          # Move the generated dynos folder (and any other assets) into the repo root
-          cp -a windows_assets/dynos ./dynos || true
-          
-      - name: Set Active Xcode Version
-        shell: bash
-        run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          xcodebuild -version
+          python3 fix_and_build.py
 
-      - name: Install System Prerequisites
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-        shell: bash
-        run: brew install make pkg-config coreutils xcodegen zip python-tk
-
-      - name: Step 1 - Execute Smart Validator & Auto-Patcher
-        shell: bash
-        run: python3 smart_validator.py
-
-      - name: Step 2 - Execute Environment Setup & Xcode Builder
-        shell: bash
-        run: python3 fix_and_build.py
-
-      - name: Step 3 - Package Output Artifacts
-        shell: bash
-        run: |
-          python3 -c "
-          import os, shutil, zipfile
-          app_path = 'build/Release-iphoneos/saturn.app'
-          os.makedirs('Payload', exist_ok=True)
-          if os.path.exists(app_path):
-              shutil.copytree(app_path, 'Payload/saturn.app')
-          with zipfile.ZipFile('saturn.ipa', 'w', zipfile.ZIP_DEFLATED) as zipf:
-              for root, _, files in os.walk('Payload'):
-                  for file in files:
-                      fp = os.path.join(root, file)
-                      zipf.write(fp, os.path.relpath(fp, '.'))
-          "
-
-      - name: Upload Compiled IPA Artifact
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: saturn-ios-ipa
+          name: saturn-ipa
           path: saturn.ipa
