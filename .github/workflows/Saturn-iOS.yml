@@ -1,359 +1,62 @@
-name: Custom Python Discovery, ImGui & Multi-Artifact Xcode iOS Build
+name: iOS Multi-Script Xcode Build Pipeline
 
 on:
   push:
-    branches: [ "legacy" ]
+    branches: [ "legacy", "main" ]
   workflow_dispatch:
 
 jobs:
-  xcode-ios-build:
-    name: Source Discovery, ImGui Integration and Xcode Build
+  validate-and-build:
+    name: Validate, Patch Dependencies, and Build iOS App
     runs-on: macos-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Select Xcode Version
+      - name: Set Active Xcode Version
         shell: bash
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
 
-      - name: Install Build Prerequisites & XcodeGen
+      - name: Install System Prerequisites
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         shell: bash
         run: |
-          brew install make pkg-config coreutils xcodegen zip
+          brew install make pkg-config coreutils xcodegen zip python-tk
 
-      - name: Step 0 - Git Clone External Repositories & Sync Submodules
+      - name: Step 1 - Execute Pre-Build File Scanner & Validator
         shell: bash
-        run: |
-          echo "--- Syncing Git Submodules & Fetching External Source Repositories ---"
-          git submodule update --init --recursive || true
-          
-          if [ ! -d "src/imgui" ] || [ ! -f "src/imgui/imgui.h" ]; then
-            echo "[GIT CLONE] Cloning Dear ImGui source into src/imgui..."
-            mkdir -p src/imgui
-            git clone --depth 1 https://github.com/ocornut/imgui.git temp_imgui || true
-            if [ -d "temp_imgui" ]; then
-              cp -r temp_imgui/*.cpp temp_imgui/*.h src/imgui/ 2>/dev/null || true
-              rm -rf temp_imgui
-            fi
-          fi
+        run: python3 pre_build_validator.py
 
-      - name: Step 1 - Write fix_and_build.py Script
-        shell: bash
-        run: |
-          cat << 'EOF' > fix_and_build.py
-          #!/usr/bin/env python3
-          import os
-          import sys
-          import subprocess
-          import plistlib
-
-          # Self-bootstrap missing dependencies directly into active Python interpreter
-          try:
-              import yaml
-          except ImportError:
-              print("[SETUP] PyYAML missing. Self-installing pyyaml...")
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
-              import yaml
-
-          def setup_directories_and_headers():
-              print("[SETUP] Creating necessary directories and mock headers...")
-              os.makedirs("include/PR", exist_ok=True)
-              os.makedirs("include/SDL2", exist_ok=True)
-              os.makedirs("src/saturn", exist_ok=True)
-              os.makedirs("src/imgui", exist_ok=True)
-
-              # 1. Write ultratypes.h with forced NON_MATCHING definition
-              ultratypes_content = """#ifndef ULTRATYPES_H
-          #define ULTRATYPES_H
-          #define NON_MATCHING 1
-          typedef unsigned char u8;
-          typedef unsigned short u16;
-          typedef unsigned int u32;
-          typedef unsigned long long u64;
-          typedef signed char s8;
-          typedef short s16;
-          typedef int s32;
-          typedef long long s64;
-          typedef float f32;
-          typedef double f64;
-          #endif
-          """
-              with open("include/PR/ultratypes.h", "w") as f:
-                  f.write(ultratypes_content)
-
-              # 2. Write full mock SDL.h covering all scancodes, window functions, and hints used by ImGui settings
-              sdl_content = """#ifndef SDL_H
-          #define SDL_H
-
-          typedef unsigned int Uint32;
-          typedef unsigned char Uint8;
-          typedef unsigned short Uint16;
-          typedef int Sint32;
-          typedef int SDL_bool;
-
-          typedef struct SDL_Window SDL_Window;
-          typedef void* SDL_GLContext;
-          typedef union SDL_Event { unsigned int type; } SDL_Event;
-          typedef int SDL_Scancode;
-
-          #define SDL_WINDOWPOS_CENTERED 0x2FFF0000
-          #define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS "SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"
-
-          #ifdef __cplusplus
-          extern "C" {
-          #endif
-          const char* SDL_GetScancodeName(SDL_Scancode scancode);
-          void SDL_SetWindowSize(SDL_Window* window, int w, int h);
-          void SDL_SetWindowPosition(SDL_Window* window, int x, int y);
-          SDL_bool SDL_SetHint(const char* name, const char* value);
-          #ifdef __cplusplus
-          }
-          #endif
-
-          #endif
-          """
-              with open("include/SDL2/SDL.h", "w") as f:
-                  f.write(sdl_content)
-
-              # 3. Stub header guards if missing
-              for header in ["src/saturn/saturn_timelines.h", "src/saturn/saturn_textures.h"]:
-                  if not os.path.exists(header):
-                      with open(header, "w") as f:
-                          f.write(f"#ifndef {os.path.basename(header).upper().replace('.', '_')}\n#define {os.path.basename(header).upper().replace('.', '_')}\n#include \n#endif\n")
-
-              # 4. Mock assets/ini if missing
-              if not os.path.exists("imgui.ini"):
-                  with open("imgui.ini", "w") as f:
-                      f.write("[Window][Saturn iOS Debug Console]\nPos=20,20\nSize=450,280\nCollapsed=0\n")
-
-              if not os.path.exists("baserom.us.z64"):
-                  with open("baserom.us.z64", "wb") as f:
-                      f.write(b'\0' * (12 * 1024 * 1024))
-
-              if not os.path.exists("discord_game_sdk.dll"):
-                  with open("discord_game_sdk.dll", "w") as f:
-                      f.write("Mock SDK DLL")
-
-              # 5. Create Info.plist for iOS bundle
-              plist_data = {
-                  "CFBundleDevelopmentRegion": "en",
-                  "CFBundleExecutable": "saturn",
-                  "CFBundleIdentifier": "com.saturn.app",
-                  "CFBundleInfoDictionaryVersion": "6.0",
-                  "CFBundleName": "saturn",
-                  "CFBundlePackageType": "APPL",
-                  "CFBundleShortVersionString": "1.0",
-                  "CFBundleVersion": "1",
-                  "LSRequiresIPhoneOS": True,
-                  "UILaunchStoryboardName": "LaunchScreen",
-                  "UISupportedInterfaceOrientations": ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
-                  "UIDeviceFamily": [1, 2]
-              }
-              with open("Info.plist", "wb") as f:
-                  plistlib.dump(plist_data, f)
-
-          def patch_macros_header():
-              print("[PATCH] Neutralizing IDO compiler check in include/macros.h...")
-              if os.path.exists("include/macros.h"):
-                  with open("include/macros.h", "r") as f:
-                      lines = f.readlines()
-                  with open("include/macros.h", "w") as f:
-                      for line in lines:
-                          if "Matching build is only possible on IDO" in line:
-                              f.write("// Bypassed IDO check for iOS build\n")
-                          else:
-                              f.write(line)
-
-          def generate_xcodegen_spec():
-              print("[XCODEGEN] Scanning files and generating project.yml...")
-              sources = []
-              resources = []
-              registered_resource_names = set()
-
-              for root, dirs, files in os.walk(os.getcwd()):
-                  if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload']):
-                      continue
-                  for file in files:
-                      ext = os.path.splitext(file)[1].lower()
-                      if ext == '.swift':
-                          continue
-                      
-                      rel_path = os.path.relpath(os.path.join(root, file), os.getcwd())
-                      
-                      if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
-                          sources.append(rel_path)
-                      elif ext in ('.ini', '.json', '.z64', '.png', '.jpg', '.wav', '.mp3'):
-                          if file not in registered_resource_names:
-                              registered_resource_names.add(file)
-                              resources.append(rel_path)
-
-              source_entries = [{"path": src, "optional": True} for src in sources]
-              resource_entries = [{"path": res, "optional": True} for res in resources]
-
-              project_spec = {
-                  "name": "saturn",
-                  "options": {
-                      "bundleIdPrefix": "com.saturn"
-                  },
-                  "settings": {
-                      "GCC_PREPROCESSOR_DEFINITIONS": ["NON_MATCHING=1", "$(inherited)"],
-                      "HEADER_SEARCH_PATHS": [r"$(inherited)", "include", "src", "."],
-                      "OTHER_CFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1", "-include", "include/PR/ultratypes.h"],
-                      "OTHER_CPLUSPLUSFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1", "-include", "include/PR/ultratypes.h"]
-                  },
-                  "targets": {
-                      "saturn": {
-                          "type": "application",
-                          "platform": "iOS",
-                          "deploymentTarget": "14.0",
-                          "sources": source_entries + resource_entries,
-                          "info": {
-                              "path": "Info.plist"
-                          },
-                          "settings": {
-                              "ENABLE_BITCODE": "NO",
-                              "CODE_SIGNING_ALLOWED": "NO",
-                              "CODE_SIGN_IDENTITY": "",
-                              "CODE_SIGNING_REQUIRED": "NO",
-                              "PRODUCT_NAME": "saturn",
-                              "ALWAYS_SEARCH_USER_PATHS": "NO",
-                              "CLANG_ENABLE_MODULES": "YES",
-                              "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
-                              "CLANG_CXX_LIBRARY": "libc++"
-                          }
-                      }
-                  }
-              }
-
-              with open("project.yml", "w") as f:
-                  yaml.dump(project_spec, f, default_flow_style=False)
-
-          def run_build():
-              print("[BUILD] Running xcodegen...")
-              if subprocess.call("xcodegen generate", shell=True) != 0:
-                  sys.exit(1)
-
-              build_cmd = (
-                  "xcodebuild -project saturn.xcodeproj -scheme saturn -configuration Release "
-                  "-sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO "
-                  "CODE_SIGN_IDENTITY='' CODE_SIGNING_REQUIRED=NO "
-                  "CONFIGURATION_BUILD_DIR=build/Release-iphoneos clean build"
-              )
-              
-              print(f"[BUILD] Executing: {build_cmd}")
-              process = subprocess.Popen(build_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-              
-              for line in process.stdout:
-                  clean_line = line.strip()
-                  if "CompileC" in clean_line or "CpResource" in clean_line or "Ld " in clean_line:
-                      print(f"[XCODE] {clean_line}")
-                  elif "error:" in clean_line.lower():
-                      print(f"  └─ ERROR: {clean_line}")
-
-              process.wait()
-              if process.returncode != 0:
-                  print("[BUILD ERROR] Compilation failed.")
-                  sys.exit(1)
-              
-              print("[SUCCESS] Saturn iOS executable built successfully!")
-
-          if __name__ == "__main__":
-              setup_directories_and_headers()
-              patch_macros_header()
-              generate_xcodegen_spec()
-              run_build()
-          EOF
-
-      - name: Step 2 - Write package_artifacts.py Script
-        shell: bash
-        run: |
-          cat << 'EOF' > package_artifacts.py
-          #!/usr/bin/env python3
-          import os
-          import shutil
-          import zipfile
-
-          def create_ipa():
-              print("[PACKAGING] Locating compiled saturn.app...")
-              app_path = "build/Release-iphoneos/saturn.app"
-              if not os.path.exists(app_path):
-                  for root, dirs, files in os.walk("."):
-                      if "saturn.app" in dirs:
-                          app_path = os.path.join(root, "saturn.app")
-                          break
-
-              payload_dir = "Payload"
-              if os.path.exists(payload_dir):
-                  shutil.rmtree(payload_dir)
-              os.makedirs(payload_dir)
-              
-              dest_app = os.path.join(payload_dir, "saturn.app")
-              if os.path.exists(app_path):
-                  shutil.copytree(app_path, dest_app)
-              else:
-                  print(f"[WARNING] saturn.app not found at {app_path}. Creating fallback bundle structure.")
-                  os.makedirs(dest_app, exist_ok=True)
-
-              for resource in ["imgui.ini", "baserom.us.z64", "discord_game_sdk.dll"]:
-                  if os.path.exists(resource) and not os.path.exists(os.path.join(dest_app, resource)):
-                      shutil.copy(resource, os.path.join(dest_app, resource))
-
-              ipa_name = "saturn.ipa"
-              with zipfile.ZipFile(ipa_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                  for root, dirs, files in os.walk(payload_dir):
-                      for file in files:
-                          full_path = os.path.join(root, file)
-                          zipf.write(full_path, os.path.relpath(full_path, start="."))
-
-              print(f"[ARTIFACT 1 READY] {ipa_name} (~{os.path.getsize(ipa_name) / (1024 * 1024):.2f} MB)")
-
-          def create_xcode_source_zip():
-              print("[PACKAGING] Creating Xcode source project archive...")
-              zip_name = "saturn-xcode-source.zip"
-              allowed_exts = ('.c', '.cpp', '.h', '.hpp', '.m', '.mm', '.py', '.sh', '.json', '.dll', '.z64', '.ini', '.yml', '.plist', '.xcodeproj', '.xcworkspace')
-              
-              with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                  for root, dirs, files in os.walk("."):
-                      if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload']):
-                          continue
-                      for file in files:
-                          if os.path.splitext(file)[1].lower() in allowed_exts or file in ["project.yml", "Info.plist", "imgui.ini"]:
-                              full_path = os.path.join(root, file)
-                              zipf.write(full_path, os.path.relpath(full_path, start="."))
-
-              print(f"[ARTIFACT 2 READY] {zip_name} (~{os.path.getsize(zip_name) / (1024 * 1024):.2f} MB)")
-
-          if __name__ == "__main__":
-              create_ipa()
-              create_xcode_source_zip()
-          EOF
-
-      - name: Run Force-Build Script
+      - name: Step 2 - Execute Environment Setup, Dependency Fetcher & Xcode Builder
         shell: bash
         run: python3 fix_and_build.py
 
-      - name: Run Package Artifacts Script
+      - name: Step 3 - Package Output Artifacts
         shell: bash
-        run: python3 package_artifacts.py
+        run: |
+          python3 -c "
+          import os, shutil, zipfile
+          app_path = 'build/Release-iphoneos/saturn.app'
+          os.makedirs('Payload', exist_ok=True)
+          if os.path.exists(app_path):
+              shutil.copytree(app_path, 'Payload/saturn.app')
+          with zipfile.ZipFile('saturn.ipa', 'w', zipfile.ZIP_DEFLATED) as zipf:
+              for root, _, files in os.walk('Payload'):
+                  for file in files:
+                      fp = os.path.join(root, file)
+                      zipf.write(fp, os.path.relpath(fp, '.'))
+          "
 
-      - name: Upload Artifact 1 - App IPA Build (~30MB)
+      - name: Upload Compiled IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: saturn-ios-ipa-build
+          name: saturn-ios-ipa
           path: saturn.ipa
-
-      - name: Upload Artifact 2 - Xcode Project Source Archive (~20MB)
-        uses: actions/upload-artifact@v4
-        with:
-          name: saturn-xcode-source-project
-          path: saturn-xcode-source.zip
