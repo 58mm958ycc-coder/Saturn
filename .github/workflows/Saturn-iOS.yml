@@ -31,7 +31,37 @@ jobs:
       - name: Install Apple Project Blueprint and Build Utilities        
         run: |          
           echo "[*] Initializing official Apple developer frameworks..."          
-          brew install xcodegen      
+          brew install xcodegen cmake     
+
+      - name: Build SDL2 Static Library for iOS ARM64
+        run: |
+          echo "=================================================="
+          echo "  FETCHING & BUILDING SDL2 FOR iOS ARM64          "
+          echo "=================================================="
+          
+          git clone --depth 1 --branch release-2.30.10 https://github.com/libsdl-org/SDL.git sdl2_src
+          
+          mkdir -p include_deps/SDL2
+          cp -R sdl2_src/include/* include_deps/SDL2/
+          
+          cmake -S sdl2_src -B sdl2_build \
+            -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DSDL_STATIC=ON \
+            -DSDL_SHARED=OFF \
+            -DSDL_TEST=OFF
+            
+          cmake --build sdl2_build --config Release
+          
+          mkdir -p lib_deps
+          find sdl2_build -name "*.a" -exec cp {} lib_deps/ \;
+          if [ -f "lib_deps/libSDL2-static.a" ] && [ ! -f "lib_deps/libSDL2.a" ]; then
+            cp lib_deps/libSDL2-static.a lib_deps/libSDL2.a
+          fi
+          
+          echo "[✔] SDL2 compiled successfully for iOS ARM64!"
 
       - name: Dynamically Generate Unified Xcode Project Mapping Blueprint        
         run: |          
@@ -61,11 +91,28 @@ jobs:
               settings:
                 OTHER_CFLAGS: ["-DTARGET_APPLE=1", "-DION_MOBILE=1", "-DSATURN_LAUNCH_ALL_GUIS=1", "-DSHOW_DIAGNOSTICS_DASHBOARD=1", "-w"]
                 HEADER_SEARCH_PATHS: [
+                  "$(SRCROOT)/include_deps",
                   "$(SRCROOT)/src",
                   "$(SRCROOT)/src/saturn",
                   "$(SRCROOT)/src/saturn/imgui",
                   "$(SRCROOT)/src/saturn/libs/imgui",
                   "$(SRCROOT)/include"
+                ]
+                LIBRARY_SEARCH_PATHS: [
+                  "$(SRCROOT)/lib_deps"
+                ]
+                OTHER_LDFLAGS: [
+                  "-lSDL2",
+                  "-framework", "AVFoundation",
+                  "-framework", "AudioToolbox",
+                  "-framework", "CoreGraphics",
+                  "-framework", "CoreMotion",
+                  "-framework", "Foundation",
+                  "-framework", "GameController",
+                  "-framework", "Metal",
+                  "-framework", "OpenGLES",
+                  "-framework", "QuartzCore",
+                  "-framework", "UIKit"
                 ]
                 GCC_C_LANGUAGE_STANDARD: gnu11
                 CLANG_CXX_LANGUAGE_STANDARD: c++17
