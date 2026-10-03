@@ -58,15 +58,13 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating iOS project.yml using clean directory paths...")
+    print("[XCODEGEN] Generating iOS project.yml (Code paths only)...")
     
-    # Use directory-level sources to handle all 3,000+ files effortlessly
+    # Only point xcodegen to source code directories to prevent resource filename collisions
     sources = [
         {"path": "src"},
         {"path": "include"},
-        {"path": "lib"},
-        {"path": "dynos", "optional": True},
-        {"path": "tools", "optional": True}
+        {"path": "lib"}
     ]
 
     project_spec = {
@@ -110,6 +108,14 @@ def build_xcodegen_and_run():
         "CONFIGURATION_BUILD_DIR=build/Release-iphoneos clean build"
     )
     subprocess.check_call(cmd, shell=True)
+
+    print("[POST-BUILD] Safely merging DynOS asset packs into the app bundle...")
+    app_dynos_path = "build/Release-iphoneos/saturn.app/dynos"
+    if os.path.exists("dynos"):
+        if os.path.exists(app_dynos_path):
+            shutil.rmtree(app_dynos_path)
+        shutil.copytree("dynos", app_dynos_path)
+        print("[POST-BUILD] DynOS packs successfully embedded!")
 
 if __name__ == "__main__":
     self_install_deps()
