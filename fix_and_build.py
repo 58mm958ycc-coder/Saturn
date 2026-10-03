@@ -36,7 +36,7 @@ def setup_headers_and_mocks():
         f.write("#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\n#include \n#define NON_MATCHING 1\ntypedef unsigned char u8;\ntypedef unsigned short u16;\ntypedef unsigned int u32;\ntypedef unsigned long long u64;\ntypedef signed char s8;\ntypedef short s16;\ntypedef int s32;\ntypedef long long s64;\ntypedef float f32;\ntypedef double f64;\n#endif\n")
 
     with open("include/SDL2/SDL.h", "w") as f:
-        f.write("#ifndef SDL_H\n#define SDL_H\n#include \ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef int SDL_bool;\ntypedef int SDL_Keycode;\ntypedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;\ntypedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;\ntypedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;\ntypedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;\ntypedef int SDL_Scancode;\n#define SDL_KEYDOWN 0x300\n#define SDL_MOUSEMOTION 0x400\n#define SDLK_m 'm'\n#define SDLK_n 'n'\n#define SDL_WINDOWPOS_CENTERED 0x2FFF0000\n#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS \"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nconst char* SDL_GetScancodeName(SDL_Scancode scancode);\nvoid SDL_SetWindowSize(void* window, int w, int h);\nvoid SDL_SetWindowPosition(void* window, int x, int y);\nSDL_bool SDL_SetHint(const char* name, const char* value);\nvoid SDL_Delay(Uint32 ms);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
+        f.write("#ifndef SDL_H\n#define SDL_H\n#include \ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef int SDL_bool;\ntypedef int SDL_Keycode;\ntypedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;\ntypedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;\ntypedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;\ntypedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;\ntypedef int SDL_Scancode;\n#define SDL_KEYDOWN 0x300\n#define SDL_MOUSEMOTION 0x400\n#define SDLK_m 'm'\n#define SDLK_n 'n'\n#define SDL_WINDOWPOS_CENTERED 0x2FFF0000\n#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_ENTIONS \"SDL_JOYSTICK_ALLOW_BACKGROUND_ENTIONS\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nconst char* SDL_GetScancodeName(SDL_Scancode scancode);\nvoid SDL_SetWindowSize(void* window, int w, int h);\nvoid SDL_SetWindowPosition(void* window, int x, int y);\nSDL_bool SDL_SetHint(const char* name, const char* value);\nvoid SDL_Delay(Uint32 ms);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
 
     with open("include/PR/gbi.h", "w") as f:
         f.write("#ifndef GBI_H\n#define GBI_H\n#define G_TRI2 0xb1\n#endif\n")
@@ -58,23 +58,16 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating iOS project.yml (Excluding Windows/DirectX)...")
-    sources = []
+    print("[XCODEGEN] Generating iOS project.yml using clean directory paths...")
     
-    # Exclusions to prevent DirectX and Windows Audio from breaking the iOS build
-    platform_exclusions = ['dxsdk', 'direct3d', 'd3d11', 'd3d12', 'wgl', 'glx', 'wasapi', 'alsa', 'wiiu']
-    
-    for root, _, files in os.walk(os.getcwd()):
-        if any(x in root.lower() for x in ['build', '.git', 'deriveddata', 'payload', 'external_deps'] + platform_exclusions):
-            continue
-        for file in files:
-            if any(x in file.lower() for x in platform_exclusions):
-                continue
-                
-            ext = os.path.splitext(file)[1].lower()
-            if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
-                rel_path = os.path.relpath(os.path.join(root, file), os.getcwd())
-                sources.append({"path": rel_path, "optional": True})
+    # Use directory-level sources to handle all 3,000+ files effortlessly
+    sources = [
+        {"path": "src"},
+        {"path": "include"},
+        {"path": "lib"},
+        {"path": "dynos", "optional": True},
+        {"path": "tools", "optional": True}
+    ]
 
     project_spec = {
         "name": "saturn",
@@ -102,8 +95,14 @@ def build_xcodegen_and_run():
     with open("project.yml", "w") as f:
         yaml.dump(project_spec, f, default_flow_style=False)
 
-    subprocess.check_call(["xcodegen", "generate"])
+    print("[XCODEGEN] Running xcodegen generate...")
+    try:
+        subprocess.check_call(["xcodegen", "generate"])
+    except subprocess.CalledProcessError as e:
+        print(f"[XCODEGEN ERROR] xcodegen exited with code {e.returncode}")
+        sys.exit(1)
 
+    print("[XCODEBUILD] Building iOS target...")
     cmd = (
         "xcodebuild -project saturn.xcodeproj -scheme saturn -configuration Release "
         "-sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO "
