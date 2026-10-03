@@ -58,9 +58,8 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating iOS project.yml (Code paths only)...")
+    print("[XCODEGEN] Generating iOS project.yml with proper flags and libraries...")
     
-    # Only point xcodegen to source code directories to prevent resource filename collisions
     sources = [
         {"path": "src"},
         {"path": "include"},
@@ -71,8 +70,27 @@ def build_xcodegen_and_run():
         "name": "saturn",
         "options": {"bundleIdPrefix": "com.saturn"},
         "settings": {
-            "GCC_PREPROCESSOR_DEFINITIONS": ["NON_MATCHING=1", "$(inherited)"],
-            "HEADER_SEARCH_PATHS": ["$(inherited)", "include", "src", "."]
+            "GCC_PREPROCESSOR_DEFINITIONS": [
+                "NON_MATCHING=1",
+                "DYNOS",
+                "RAPI_GL=1",
+                "WAPI_SDL2=1",
+                "HAVE_SDL2=1",
+                "VERSION_US",
+                "$(inherited)"
+            ],
+            "HEADER_SEARCH_PATHS": [
+                "$(inherited)",
+                "include",
+                "src",
+                ".",
+                "/opt/homebrew/include",
+                "/opt/homebrew/include/SDL2"
+            ],
+            "LIBRARY_SEARCH_PATHS": [
+                "$(inherited)",
+                "/opt/homebrew/lib"
+            ]
         },
         "targets": {
             "saturn": {
@@ -84,7 +102,8 @@ def build_xcodegen_and_run():
                 "settings": {
                     "ENABLE_BITCODE": "NO",
                     "CODE_SIGNING_ALLOWED": "NO",
-                    "PRODUCT_NAME": "saturn"
+                    "PRODUCT_NAME": "saturn",
+                    "OTHER_LDFLAGS": ["$(inherited)", "-lSDL2"]
                 }
             }
         }
