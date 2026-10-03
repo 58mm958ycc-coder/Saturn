@@ -4,6 +4,7 @@ import sys
 import shutil
 import subprocess
 import plistlib
+import zipfile
 
 def self_install_deps():
     try:
@@ -12,8 +13,53 @@ def self_install_deps():
         print("[SETUP] PyYAML missing. Installing...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
 
+def clean_and_validate_sources():
+    print("[VALIDATOR] Scanning source tree for all .cpp, .c, and .h files...")
+    repo_root = os.getcwd()
+    platform_exclusions = ['dxsdk', 'direct3d', 'd3d11', 'd3d12', 'wgl', 'glx', 'wasapi', 'alsa', 'wiiu']
+    
+    scanned = 0
+    fixed = 0
+    
+    for root, _, files in os.walk(repo_root):
+        if any(x in root.lower() for x in ['build', '.git', 'deriveddata', 'payload', 'external_deps'] + platform_exclusions):
+            continue
+        for file in files:
+            if file.endswith(('.cpp', '.c', '.h', '.hpp')):
+                scanned += 1
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                except Exception:
+                    continue
+                
+                new_lines = []
+                changed = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith('#include') and len(stripped.split()) < 2:
+                        changed = True
+                        continue
+                    new_lines.append(line)
+                    
+                content = "".join(new_lines)
+                injections = []
+                if 'std::filesystem' in content and '#include ' not in content:
+                    injections.append('#include \n')
+                if 'size_t' in content and '#include ' not in content and '#include ' not in content:
+                    injections.append('#include \n')
+                    
+                if injections or changed:
+                    final_content = "".join(injections) + "".join(new_lines)
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(final_content)
+                    fixed += 1
+                    
+    print(f"[VALIDATOR] Scanned {scanned} files. Cleaned/fixed {fixed} files.")
+
 def setup_headers_and_mocks():
-    print("[SETUP] Injecting standard headers and creating mock environment...")
+    print("[SETUP] Injecting standard headers and mock environment...")
     os.makedirs("include/PR", exist_ok=True)
     os.makedirs("include/SDL2", exist_ok=True)
     os.makedirs("src/saturn/imgui", exist_ok=True)
@@ -44,7 +90,7 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating iOS project.yml with C++17 and proper definitions...")
+    print("[XCODEGEN] Generating project.yml and compiling via Xcode...")
     
     sources = [
         {
@@ -112,10 +158,8 @@ def build_xcodegen_and_run():
     with open("project.yml", "w") as f:
         yaml.dump(project_spec, f, default_flow_style=False)
 
-    print("[XCODEGEN] Running xcodegen generate...")
     subprocess.check_call(["xcodegen", "generate"])
 
-    print("[XCODEBUILD] Building iOS target...")
     cmd = [
         "xcodebuild",
         "-project", "saturn.xcodeproj",
@@ -141,15 +185,32 @@ def build_xcodegen_and_run():
         print(f"[XCODEBUILD ERROR] Build failed with exit code {process.returncode}")
         sys.exit(1)
 
-    print("[POST-BUILD] Safely merging DynOS asset packs into the app bundle...")
+    print("[POST-BUILD] Embedding DynOS asset packs...")
     app_dynos_path = "build/Release-iphoneos/saturn.app/dynos"
     if os.path.exists("dynos"):
         if os.path.exists(app_dynos_path):
             shutil.rmtree(app_dynos_path)
         shutil.copytree("dynos", app_dynos_path)
-        print("[POST-BUILD] DynOS packs successfully embedded!")
+
+    print("[PACKAGER] Creating final .ipa package...")
+    payload_dir = "Payload"
+    if os.path.exists(payload_dir):
+        shutil.rmtree(payload_dir)
+    os.makedirs(payload_dir)
+    
+    shutil.copytree("build/Release-iphoneos/saturn.app", os.path.join(payload_dir, "saturn.app"))
+    
+    with zipfile.ZipFile("saturn.ipa", "w", zipfile.ZIP_DEFLATED) as ipa:
+        for root, _, files in os.walk(payload_dir):
+            for file in files:
+                abs_path = os.path.join(root, file)
+                rel_path = os.path.relpath(abs_path, payload_dir)
+                ipa.write(abs_path, os.path.join("Payload", rel_path))
+                
+    print("[SUCCESS] saturn.ipa generated successfully!")
 
 if __name__ == "__main__":
     self_install_deps()
+    clean_and_validate_sources()
     setup_headers_and_mocks()
     build_xcodegen_and_run()
