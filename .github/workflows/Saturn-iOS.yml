@@ -18,7 +18,6 @@ jobs:
           echo "  SELECTING LATEST XCODE VERSION                 "
           echo "=================================================="
           
-          # Find the highest versioned Xcode installed on the macOS runner
           LATEST_XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$LATEST_XCODE" ]; then
             echo "[*] Switching developer tools to: $LATEST_XCODE"
@@ -37,10 +36,8 @@ jobs:
       - name: Dynamically Generate Unified Xcode Project Mapping Blueprint        
         run: |          
           echo "=================================================="          
-          echo "  CREATING XCODE PROJECT VIA XCODEGEN            "          
+          echo "  SCANNING ALL SOURCE & HEADER FILES ACROSS REPO "          
           echo "=================================================="          
-          
-          mkdir -p src levels actors include
           
           cat << 'EOF' > project.yml
           name: SaturnApp
@@ -53,17 +50,29 @@ jobs:
               platform: iOS
               deploymentTarget: "14.0"
               sources:
-                - path: src
-                - path: levels
-                - path: actors
+                - path: .
+                  includes:
+                    - "**/*.c"
+                    - "**/*.cpp"
+                    - "**/*.cc"
+                    - "**/*.cxx"
+                    - "**/*.h"
+                    - "**/*.hpp"
+                    - "**/*.inl"
+                    - "**/*.mm"
+                    - "**/*.m"
+                    - "**/*.s"
+                    - "**/*.S"
+                  excludes:
+                    - "build/**"
+                    - "build_output/**"
+                    - "Payload/**"
+                    - ".github/**"
               settings:
                 OTHER_CFLAGS: ["-DTARGET_APPLE=1", "-DION_MOBILE=1", "-DSATURN_LAUNCH_ALL_GUIS=1", "-DSHOW_DIAGNOSTICS_DASHBOARD=1", "-w"]
                 HEADER_SEARCH_PATHS: [
-                  "$(SRCROOT)/src",
-                  "$(SRCROOT)/src/saturn",
-                  "$(SRCROOT)/src/saturn/imgui",
-                  "$(SRCROOT)/src/saturn/libs/imgui",
-                  "$(SRCROOT)/include"
+                  "$(SRCROOT)",
+                  "$(SRCROOT)/**"
                 ]
                 GCC_C_LANGUAGE_STANDARD: gnu11
                 CLANG_CXX_LANGUAGE_STANDARD: c++17
@@ -76,7 +85,7 @@ jobs:
             echo "[!] ERROR: XcodeGen failed to generate SaturnApp.xcodeproj"
             exit 1
           fi
-          echo "[✔] SaturnApp.xcodeproj generated successfully!"
+          echo "[✔] SaturnApp.xcodeproj generated successfully with ALL source/header files included!"
 
       - name: Compile Full Project Source Tree into Live iOS Executable        
         run: |          
@@ -109,11 +118,18 @@ jobs:
           
           cp -R build_output/MyApplication.app/* Payload/MyApplication.app/
           
+          # Copy all non-code game assets directly into the application container
           if [ -d "dynos" ]; then
               cp -R dynos Payload/MyApplication.app/dynos
           fi
           if [ -d "res" ]; then
               cp -R res Payload/MyApplication.app/res
+          fi
+          if [ -d "levels" ]; then
+              cp -R levels Payload/MyApplication.app/levels
+          fi
+          if [ -d "actors" ]; then
+              cp -R actors Payload/MyApplication.app/actors
           fi
           
           if [ -f "Payload/MyApplication.app/SaturnApp" ]; then
