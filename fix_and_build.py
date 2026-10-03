@@ -2,8 +2,6 @@
 import os
 import sys
 import shutil
-import zipfile
-import urllib.request
 import subprocess
 import plistlib
 
@@ -13,18 +11,6 @@ def self_install_deps():
     except ImportError:
         print("[SETUP] PyYAML missing. Installing...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
-
-def fetch_external_assets_and_ipas():
-    print("[DOWNLOADER] Checking for missing external bundles...")
-    os.makedirs("external_deps", exist_ok=True)
-    downloads = {"imgui_src.zip": "https://github.com/ocornut/imgui/archive/refs/heads/master.zip"}
-    for target_file, url in downloads.items():
-        destination = os.path.join("external_deps", target_file)
-        if not os.path.exists(destination):
-            try:
-                urllib.request.urlretrieve(url, destination)
-            except Exception as e:
-                pass
 
 def setup_headers_and_mocks():
     print("[SETUP] Injecting standard headers and creating mock environment...")
@@ -58,10 +44,23 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating iOS project.yml with proper flags and libraries...")
+    print("[XCODEGEN] Generating iOS project.yml, excluding Windows/Desktop backends...")
     
+    # Exclude Windows/DirectX/Desktop-only source files from compilation
     sources = [
-        {"path": "src"},
+        {
+            "path": "src",
+            "excludes": [
+                "pc/win32",
+                "pc/dxsdk",
+                "pc/gfx/gfx_direct3d11.cpp",
+                "pc/gfx/gfx_dxgi.cpp",
+                "pc/gfx/gfx_glx.c",
+                "pc/gfx/gfx_wgl.c",
+                "pc/audio/audio_wasapi.c",
+                "pc/audio/audio_alsa.c"
+            ]
+        },
         {"path": "include"},
         {"path": "lib"}
     ]
@@ -113,20 +112,33 @@ def build_xcodegen_and_run():
         yaml.dump(project_spec, f, default_flow_style=False)
 
     print("[XCODEGEN] Running xcodegen generate...")
-    try:
-        subprocess.check_call(["xcodegen", "generate"])
-    except subprocess.CalledProcessError as e:
-        print(f"[XCODEGEN ERROR] xcodegen exited with code {e.returncode}")
-        sys.exit(1)
+    subprocess.check_call(["xcodegen", "generate"])
 
-    print("[XCODEBUILD] Building iOS target...")
-    cmd = (
-        "xcodebuild -project saturn.xcodeproj -scheme saturn -configuration Release "
-        "-sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO "
-        "CODE_SIGN_IDENTITY='' CODE_SIGNING_REQUIRED=NO "
-        "CONFIGURATION_BUILD_DIR=build/Release-iphoneos clean build"
-    )
-    subprocess.check_call(cmd, shell=True)
+    print("[XCODEBUILD] Building iOS target (with live output streaming)...")
+    cmd = [
+        "xcodebuild",
+        "-project", "saturn.xcodeproj",
+        "-scheme", "saturn",
+        "-configuration", "Release",
+        "-sdk", "iphoneos",
+        "ARCHS=arm64",
+        "ONLY_ACTIVE_ARCH=NO",
+        "CODE_SIGNING_ALLOWED=NO",
+        "CODE_SIGN_IDENTITY=",
+        "CODE_SIGNING_REQUIRED=NO",
+        "CONFIGURATION_BUILD_DIR=build/Release-iphoneos",
+        "clean",
+        "build"
+    ]
+    
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+    for line in process.stdout:
+        print(line, end="")
+    process.wait()
+    
+    if process.returncode != 0:
+        print(f"[XCODEBUILD ERROR] Build failed with exit code {process.returncode}")
+        sys.exit(1)
 
     print("[POST-BUILD] Safely merging DynOS asset packs into the app bundle...")
     app_dynos_path = "build/Release-iphoneos/saturn.app/dynos"
@@ -138,6 +150,5 @@ def build_xcodegen_and_run():
 
 if __name__ == "__main__":
     self_install_deps()
-    fetch_external_assets_and_ipas()
     setup_headers_and_mocks()
     build_xcodegen_and_run()
