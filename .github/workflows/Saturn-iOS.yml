@@ -99,6 +99,7 @@ jobs:
           typedef unsigned char Uint8;
           typedef unsigned short Uint16;
           typedef int Sint32;
+          typedef int SDL_bool;
 
           typedef struct SDL_Window SDL_Window;
           typedef void* SDL_GLContext;
@@ -113,6 +114,8 @@ jobs:
           #endif
           const char* SDL_GetScancodeName(SDL_Scancode scancode);
           void SDL_SetWindowSize(SDL_Window* window, int w, int h);
+          void SDL_SetWindowPosition(SDL_Window* window, int x, int y);
+          SDL_bool SDL_SetHint(const char* name, const char* value);
           #ifdef __cplusplus
           }
           #endif
