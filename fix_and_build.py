@@ -86,20 +86,111 @@ def clean_and_validate_sources():
     print(f"[VALIDATOR] Scanned {scanned} scriptable files. Cleaned/fixed {fixed} files.")
 
 def setup_headers_and_mocks():
-    print("[SETUP] Injecting standard headers and mock environment...")
+    print("[SETUP] Injecting full standard headers and mock environment...")
     os.makedirs("include/PR", exist_ok=True)
     os.makedirs("include/SDL2", exist_ok=True)
     os.makedirs("src/saturn/imgui", exist_ok=True)
 
     with open("include/PR/ultratypes.h", "w") as f:
-        f.write("#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\n#include \n#define NON_MATCHING 1\ntypedef unsigned char u8;\ntypedef unsigned short u16;\ntypedef unsigned int u32;\ntypedef unsigned long long u64;\ntypedef signed char s8;\ntypedef short s16;\ntypedef int s32;\ntypedef long long s64;\ntypedef float f32;\ntypedef double f64;\n#endif\n")
+        f.write("""#ifndef ULTRATYPES_H
+#define ULTRATYPES_H
+#include 
+#include 
+#define NON_MATCHING 1
+typedef uint8_t  u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int8_t   s8;
+typedef int16_t  s16;
+typedef int32_t  s32;
+typedef int64_t  s64;
+typedef float    f32;
+typedef double   f64;
+#endif
+""")
 
     with open("include/SDL2/SDL.h", "w") as f:
-        f.write("#ifndef SDL_H\n#define SDL_H\n#include \ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef int SDL_bool;\ntypedef int SDL_Keycode;\ntypedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;\ntypedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;\ntypedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;\ntypedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;\ntypedef int SDL_Scancode;\n#define SDL_KEYDOWN 0x300\n#define SDL_MOUSEMOTION 0x400\n#define SDLK_m 'm'\n#define SDLK_n 'n'\n#define SDL_WINDOWPOS_CENTERED 0x2FFF0000\n#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_ENTIONS \"SDL_JOYSTICK_ALLOW_BACKGROUND_ENTIONS\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nconst char* SDL_GetScancodeName(SDL_Scancode scancode);\nvoid SDL_SetWindowSize(void* window, int w, int h);\nvoid SDL_SetWindowPosition(void* window, int x, int y);\nSDL_bool SDL_SetHint(const char* name, const char* value);\nvoid SDL_Delay(Uint32 ms);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
+        f.write("""#ifndef SDL_H
+#define SDL_H
+#include 
+#include 
 
-    # Added forward declarations for Gfx, Mtx, and Vp to fix graph_node.h and area.h compilation errors
+typedef struct SDL_Window SDL_Window;
+typedef void* SDL_GLContext;
+typedef struct SDL_Renderer SDL_Renderer;
+typedef struct SDL_Texture SDL_Texture;
+typedef struct SDL_Surface SDL_Surface;
+
+typedef uint32_t Uint32;
+typedef uint8_t  Uint8;
+typedef uint16_t Uint16;
+typedef int32_t  Sint32;
+typedef int      SDL_bool;
+typedef int      SDL_Keycode;
+
+typedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;
+typedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;
+typedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;
+typedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;
+typedef int SDL_Scancode;
+
+#define SDL_KEYDOWN 0x300
+#define SDL_MOUSEMOTION 0x400
+#define SDLK_m 'm'
+#define SDLK_n 'n'
+#define SDL_WINDOWPOS_CENTERED 0x2FFF0000
+#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_ENTIONS "SDL_JOYSTICK_ALLOW_BACKGROUND_ENTIONS"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+const char* SDL_GetScancodeName(SDL_Scancode scancode);
+void SDL_SetWindowSize(void* window, int w, int h);
+void SDL_SetWindowPosition(void* window, int x, int y);
+SDL_bool SDL_SetHint(const char* name, const char* value);
+void SDL_Delay(Uint32 ms);
+#ifdef __cplusplus
+}
+#endif
+#endif
+""")
+
     with open("include/PR/gbi.h", "w") as f:
-        f.write("#ifndef GBI_H\n#define GBI_H\n#define G_TRI2 0xb1\n#ifdef __cplusplus\nextern \"C\" {\n#endif\ntypedef struct Gfx Gfx;\ntypedef struct Mtx Mtx;\ntypedef struct Vp Vp;\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
+        f.write("""#ifndef GBI_H
+#define GBI_H
+#include "ultratypes.h"
+
+#define G_TRI2 0xb1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct Gfx Gfx;
+typedef struct Mtx Mtx;
+typedef struct Vp Vp;
+typedef struct LookAt LookAt;
+typedef struct Lights1 Lights1;
+typedef struct Light Light;
+typedef struct Hilite Hilite;
+
+typedef struct {
+    s16 ob[3];
+    u16 tc[2];
+    u8  cn[4];
+} Vtx_t;
+
+typedef union {
+    Vtx_t v;
+    long long force_structure_alignment;
+} Vtx;
+
+#ifdef __cplusplus
+}
+#endif
+#endif
+""")
 
     plist_data = {
         "CFBundleDevelopmentRegion": "en",
