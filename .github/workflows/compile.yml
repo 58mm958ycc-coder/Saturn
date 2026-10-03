@@ -13,6 +13,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Select Xcode Version
         shell: bash
@@ -27,6 +30,23 @@ jobs:
         shell: bash
         run: |
           brew install make pkg-config sdl2 jsoncpp coreutils xcodegen zip
+
+      - name: Step 0 - Git Clone External Repositories & Sync Submodules
+        shell: bash
+        run: |
+          echo "--- Syncing Git Submodules & Fetching External Source Repositories ---"
+          git submodule update --init --recursive || true
+          
+          # Fetch ImGui repository if native headers are missing
+          if [ ! -d "src/imgui" ] || [ ! -f "src/imgui/imgui.h" ]; then
+            echo "[GIT CLONE] Cloning Dear ImGui source into src/imgui..."
+            mkdir -p src/imgui
+            git clone --depth 1 https://github.com/ocornut/imgui.git temp_imgui || true
+            if [ -d "temp_imgui" ]; then
+              cp -r temp_imgui/*.cpp temp_imgui/*.h src/imgui/ 2>/dev/null || true
+              rm -rf temp_imgui
+            fi
+          fi
 
       - name: Step 1 - Universal Pip Installer Script
         shell: bash
@@ -43,7 +63,7 @@ jobs:
                   print(f"[PIP ERROR] Failed to install {package}: {e}")
 
           if __name__ == '__main__':
-              print("--- Initializing PIP Dependencies ---")
+              print("--- Initializing PIP Environment ---")
               packages = ["requests", "urllib3", "beautifulsoup4", "numpy", "pillow", "colorama", "pyyaml", "lxml"]
               subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--break-system-packages"])
               for pkg in packages:
@@ -55,7 +75,7 @@ jobs:
       - name: Step 2 - Scaffold ImGui & Native Source Files
         shell: bash
         run: |
-          mkdir -p build/us_pc/src/engine build/us_ios levels src/engine src/imgui
+          mkdir -p build/us_pc/src/engine build/us_ios levels src/engine src/imgui src/saturn
           
           if [ ! -f "levels/level_rules.mk" ]; then
             echo "# Auto-generated level rules" > levels/level_rules.mk
@@ -114,7 +134,7 @@ jobs:
             echo "[SCAFFOLD] Created extract_assets.py"
           fi
 
-          # Dummy binary files to maintain project artifact size targets
+          # Binary placeholders for proper release bundle scaling
           dd if=/dev/urandom of=baserom.us.z64 bs=1M count=12 2>/dev/null || echo "ROM placeholder created"
           echo "Mock SDK DLL" > discord_game_sdk.dll
 
@@ -218,7 +238,7 @@ jobs:
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Deduplicates Resources & Excludes Swift)
+      - name: Step 5 - Create Xcode Spec Generator (Recursive Search Paths Fix)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -229,8 +249,6 @@ jobs:
               sources = []
               resources = []
               header_dirs = set()
-              
-              # Track file basenames to stop duplicate output file errors in Xcode
               registered_resource_names = set()
 
               for root, dirs, files in os.walk(root_dir):
@@ -239,7 +257,7 @@ jobs:
                   for file in files:
                       ext = os.path.splitext(file)[1].lower()
                       
-                      # Explicitly ignore Swift files
+                      # Bypass Swift files
                       if ext == '.swift':
                           continue
                       
@@ -247,25 +265,28 @@ jobs:
                       
                       if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
                           sources.append(rel_path)
-                          print(f"[SCANNING SOURCE] {rel_path}")
                           if ext in ('.h', '.hpp'):
                               header_dirs.add(os.path.dirname(rel_path) or '.')
                       elif ext in ('.ini', '.json', '.z64', '.dll', '.py', '.sh'):
-                          # If a file with the same output name exists, skip it to prevent build failures
+                          # Deduplicate output names to prevent CpResource target collisions
                           if file in registered_resource_names:
-                              print(f"[DEDUP SKIPPED RESOURCE] {rel_path} (Collision with existing {file})")
                               continue
-                          
                           registered_resource_names.add(file)
                           resources.append(rel_path)
-                          print(f"[PROCESSING RESOURCE] {rel_path}")
 
               return sources, resources, sorted(list(header_dirs))
 
           def write_xcodegen_config(sources, resources, header_dirs):
-              header_paths = ["/opt/homebrew/include", "/opt/homebrew/include/SDL2", "$(SRCROOT)"]
+              # Adding Recursive wildcards $(SRCROOT)/** to resolve saturn/ relative includes
+              header_paths = [
+                  "$(SRCROOT)",
+                  "$(SRCROOT)/src",
+                  "$(SRCROOT)/**",
+                  "/opt/homebrew/include",
+                  "/opt/homebrew/include/SDL2"
+              ]
               for hd in header_dirs:
-                  formatted = f"\((SRCROOT)/{hd}" if hd != '.' else "\)(SRCROOT)"
+                  formatted = f"$(SRCROOT)/{hd}"
                   if formatted not in header_paths:
                       header_paths.append(formatted)
 
@@ -293,6 +314,8 @@ jobs:
                               "CODE_SIGNING_REQUIRED": "NO",
                               "PRODUCT_NAME": "saturn",
                               "HEADER_SEARCH_PATHS": header_paths,
+                              "USER_HEADER_SEARCH_PATHS": ["\((SRCROOT)", "\)(SRCROOT)/src", "$(SRCROOT)/**"],
+                              "ALWAYS_SEARCH_USER_PATHS": "YES",
                               "LIBRARY_SEARCH_PATHS": ["/opt/homebrew/lib"]
                           }
                       }
@@ -301,7 +324,7 @@ jobs:
 
               with open("project.yml", "w") as f:
                   yaml.dump(project_spec, f, default_flow_style=False)
-              print(f"[XCODEGEN] project.yml created with {len(sources)} source files and {len(resources)} unique resources.")
+              print(f"[XCODEGEN] Generated project.yml with recursive header paths for {len(sources)} source files.")
 
           if __name__ == '__main__':
               workspace = os.getcwd()
@@ -316,30 +339,55 @@ jobs:
           find . -name "Makefile*" -type f -exec sed -i '' 's/-I \./-I\./g' {} + || true
           find . -name "*.split" -type f -exec sed -i '' 's/-I \./-I\./g' {} + || true
 
-      - name: Step 7 - Verbose Xcode Project Generation & Build
+      - name: Step 7 - Clean Xcode Compiler Logging & Build Execution
         shell: bash
         run: |
           cat << 'EOF' > run_xcode_build.py
           import subprocess
           import sys
+          import os
+          import re
 
           def run_and_log(cmd):
               print(f"[RUNNING COMMAND] {cmd}")
               process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
               
+              cwd = os.getcwd()
+
               for line in process.stdout:
                   clean_line = line.strip()
+                  
                   if "CompileC" in clean_line:
-                      print(f"[COMPILING SOURCE] {clean_line.split()[-1]}")
-                  elif "CpResource" in clean_line or "Copy" in clean_line:
-                      print(f"[PROCESSING RESOURCE] {clean_line.split()[-2] if len(clean_line.split()) > 2 else clean_line}")
+                      # Extract the source file path ending in .c, .cpp, .m, or .mm
+                      matches = re.findall(r'(\S+\.(?:c|cpp|m|mm|cc|cxx))', clean_line)
+                      source_file = None
+                      for m in matches:
+                          if not m.endswith('.o') and 'DerivedData' not in m and 'Intermediates' not in m:
+                              source_file = m
+                              break
+                      
+                      if source_file:
+                          rel_path = os.path.relpath(source_file, cwd) if os.path.isabs(source_file) and source_file.startswith(cwd) else source_file
+                          print(f"[COMPILING SOURCE] {rel_path}")
+                      else:
+                          print("[COMPILING SOURCE] Core C/C++ Source File")
+
+                  elif "CpResource" in clean_line:
+                      matches = re.findall(r'(\S+\.(?:ini|json|z64|dll|py|sh|png|jpg|wav|mp3))', clean_line)
+                      if matches:
+                          print(f"[PROCESSING RESOURCE] {os.path.basename(matches[0])}")
+                      else:
+                          print("[PROCESSING RESOURCE] Application Asset")
+
                   elif "CompileMetalFile" in clean_line:
-                      print(f"[COMPILING SHADER] {clean_line.split()[-1]}")
+                      print(f"[COMPILING SHADER] {os.path.basename(clean_line.split()[-1])}")
+
                   elif "Ld " in clean_line:
-                      print("[LINKING] Building saturn binary executable...")
-                  elif "error:" in clean_line.lower() or "warning:" in clean_line.lower():
-                      print(f"  └─ {clean_line}")
-              
+                      print("[LINKING] Linking saturn executable binary...")
+
+                  elif "error:" in clean_line.lower():
+                      print(f"  └─ ERROR: {clean_line}")
+
               process.wait()
               return process.returncode
 
@@ -368,14 +416,14 @@ jobs:
                   print("[BUILD ERROR] Compilation failed.")
                   sys.exit(1)
               
-              print("[SUCCESS] iOS Target saturn compiled successfully.")
+              print("[SUCCESS] Saturn iOS executable built successfully.")
 
           if __name__ == "__main__":
               build()
           EOF
           python3 run_xcode_build.py
 
-      - name: Step 8 - Multi-Artifact Packager (30MB IPA + 20MB Xcode Source Zip)
+      - name: Step 8 - Dual Artifact Packaging (~30MB IPA & ~20MB Source Zip)
         shell: bash
         run: |
           cat << 'EOF' > package_artifacts.py
@@ -405,7 +453,6 @@ jobs:
               dest_app = os.path.join(payload_dir, "saturn.app")
               shutil.copytree(app_path, dest_app)
 
-              # Ensure runtime configuration files exist inside application payload
               for resource in ["imgui.ini", "baserom.us.z64", "discord_game_sdk.dll"]:
                   if os.path.exists(resource):
                       dest_res = os.path.join(dest_app, resource)
@@ -446,7 +493,6 @@ jobs:
                               full_path = os.path.join(root, file)
                               arcname = os.path.relpath(full_path, start=".")
                               zipf.write(full_path, arcname)
-                              print(f"[INSPECTABLE SOURCE] Adding {arcname}")
 
               file_size_mb = os.path.getsize(zip_name) / (1024 * 1024)
               print(f"[ARTIFACT 2 READY] {zip_name} ({file_size_mb:.2f} MB)")
