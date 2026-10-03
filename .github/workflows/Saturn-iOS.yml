@@ -1,154 +1,112 @@
-#!/usr/bin/env python3
-import os
-import sys
-import shutil
-import subprocess
-import plistlib
+name: iOS Intelligent Auto-Fix Pipeline
 
-def self_install_deps():
-    try:
-        import yaml
-    except ImportError:
-        print("[SETUP] PyYAML missing. Installing...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
+on:
+  push:
+    branches: [ "legacy", "main" ]
+  workflow_dispatch:
 
-def setup_headers_and_mocks():
-    print("[SETUP] Injecting standard headers and creating mock environment...")
-    os.makedirs("include/PR", exist_ok=True)
-    os.makedirs("include/SDL2", exist_ok=True)
-    os.makedirs("src/saturn/imgui", exist_ok=True)
-
-    with open("include/PR/ultratypes.h", "w") as f:
-        f.write("#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\n#include \n#define NON_MATCHING 1\ntypedef unsigned char u8;\ntypedef unsigned short u16;\ntypedef unsigned int u32;\ntypedef unsigned long long u64;\ntypedef signed char s8;\ntypedef short s16;\ntypedef int s32;\ntypedef long long s64;\ntypedef float f32;\ntypedef double f64;\n#endif\n")
-
-    with open("include/SDL2/SDL.h", "w") as f:
-        f.write("#ifndef SDL_H\n#define SDL_H\n#include \ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef int SDL_bool;\ntypedef int SDL_Keycode;\ntypedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;\ntypedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;\ntypedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;\ntypedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;\ntypedef int SDL_Scancode;\n#define SDL_KEYDOWN 0x300\n#define SDL_MOUSEMOTION 0x400\n#define SDLK_m 'm'\n#define SDLK_n 'n'\n#define SDL_WINDOWPOS_CENTERED 0x2FFF0000\n#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_ENTIONS \"SDL_JOYSTICK_ALLOW_BACKGROUND_ENTIONS\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nconst char* SDL_GetScancodeName(SDL_Scancode scancode);\nvoid SDL_SetWindowSize(void* window, int w, int h);\nvoid SDL_SetWindowPosition(void* window, int x, int y);\nSDL_bool SDL_SetHint(const char* name, const char* value);\nvoid SDL_Delay(Uint32 ms);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
-
-    with open("include/PR/gbi.h", "w") as f:
-        f.write("#ifndef GBI_H\n#define GBI_H\n#define G_TRI2 0xb1\n#endif\n")
-
-    plist_data = {
-        "CFBundleDevelopmentRegion": "en",
-        "CFBundleExecutable": "saturn",
-        "CFBundleIdentifier": "com.saturn.app",
-        "CFBundleInfoDictionaryVersion": "6.0",
-        "CFBundleName": "saturn",
-        "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "1.0",
-        "CFBundleVersion": "1",
-        "LSRequiresIPhoneOS": True,
-        "UIDeviceFamily": [1, 2]
-    }
-    with open("Info.plist", "wb") as f:
-        plistlib.dump(plist_data, f)
-
-def build_xcodegen_and_run():
-    import yaml
-    print("[XCODEGEN] Generating iOS project.yml, excluding Windows/Desktop backends...")
+jobs:
+  # =========================================================
+  # JOB 1: WINDOWS SERVER (DOWNLOADS ZIP & GENERATES ASSETS)
+  # =========================================================
+  windows-asset-generator:
+    name: Generate DynOS Packs (Windows)
+    runs-on: windows-latest
     
-    # Exclude Windows/DirectX/Desktop-only source files from compilation
-    sources = [
-        {
-            "path": "src",
-            "excludes": [
-                "pc/win32",
-                "pc/dxsdk",
-                "pc/gfx/gfx_direct3d11.cpp",
-                "pc/gfx/gfx_dxgi.cpp",
-                "pc/gfx/gfx_glx.c",
-                "pc/gfx/gfx_wgl.c",
-                "pc/audio/audio_wasapi.c",
-                "pc/audio/audio_alsa.c"
-            ]
-        },
-        {"path": "include"},
-        {"path": "lib"}
-    ]
+    steps:
+      - name: Download & Extract Saturn Windows Release
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Llennpie/Saturn/releases/download/saturn-legacy-2.5/saturn-14-windows.zip" -OutFile "saturn.zip"
+          Expand-Archive -Path "saturn.zip" -DestinationPath "saturn_win"
+          
+      - name: Run Executable to Generate Assets
+        shell: powershell
+        run: |
+          cd saturn_win
+          $exe = Get-ChildItem -Filter "*.exe" | Select-Object -First 1
+          if ($exe) {
+              Write-Host "Running \((\)exe.Name) for 10 seconds to generate DynOS packs..."
+              Start-Process -FilePath $exe.FullName
+              Start-Sleep -Seconds 10
+              Stop-Process -Name $exe.BaseName -Force -ErrorAction SilentlyContinue
+          } else {
+              Write-Host "No executable found in the zip!"
+          }
+          
+      - name: Upload Generated Assets to Relay Stash
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-generated-assets
+          path: saturn_win/
 
-    project_spec = {
-        "name": "saturn",
-        "options": {"bundleIdPrefix": "com.saturn"},
-        "settings": {
-            "GCC_PREPROCESSOR_DEFINITIONS": [
-                "NON_MATCHING=1",
-                "DYNOS",
-                "RAPI_GL=1",
-                "WAPI_SDL2=1",
-                "HAVE_SDL2=1",
-                "VERSION_US",
-                "$(inherited)"
-            ],
-            "HEADER_SEARCH_PATHS": [
-                "$(inherited)",
-                "include",
-                "src",
-                ".",
-                "/opt/homebrew/include",
-                "/opt/homebrew/include/SDL2"
-            ],
-            "LIBRARY_SEARCH_PATHS": [
-                "$(inherited)",
-                "/opt/homebrew/lib"
-            ]
-        },
-        "targets": {
-            "saturn": {
-                "type": "application",
-                "platform": "iOS",
-                "deploymentTarget": "14.0",
-                "sources": sources,
-                "info": {"path": "Info.plist"},
-                "settings": {
-                    "ENABLE_BITCODE": "NO",
-                    "CODE_SIGNING_ALLOWED": "NO",
-                    "PRODUCT_NAME": "saturn",
-                    "OTHER_LDFLAGS": ["$(inherited)", "-lSDL2"]
-                }
-            }
-        }
-    }
-
-    with open("project.yml", "w") as f:
-        yaml.dump(project_spec, f, default_flow_style=False)
-
-    print("[XCODEGEN] Running xcodegen generate...")
-    subprocess.check_call(["xcodegen", "generate"])
-
-    print("[XCODEBUILD] Building iOS target (with live output streaming)...")
-    cmd = [
-        "xcodebuild",
-        "-project", "saturn.xcodeproj",
-        "-scheme", "saturn",
-        "-configuration", "Release",
-        "-sdk", "iphoneos",
-        "ARCHS=arm64",
-        "ONLY_ACTIVE_ARCH=NO",
-        "CODE_SIGNING_ALLOWED=NO",
-        "CODE_SIGN_IDENTITY=",
-        "CODE_SIGNING_REQUIRED=NO",
-        "CONFIGURATION_BUILD_DIR=build/Release-iphoneos",
-        "clean",
-        "build"
-    ]
+  # =========================================================
+  # JOB 2: MACOS SERVER (MERGES ASSETS & COMPILES IOS APP)
+  # =========================================================
+  validate-and-build:
+    name: Auto-Patch, Validate, and Build iOS App
+    runs-on: macos-latest
+    needs: windows-asset-generator # This tells GitHub to wait for the Windows server to finish!
     
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-    for line in process.stdout:
-        print(line, end="")
-    process.wait()
-    
-    if process.returncode != 0:
-        print(f"[XCODEBUILD ERROR] Build failed with exit code {process.returncode}")
-        sys.exit(1)
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    print("[POST-BUILD] Safely merging DynOS asset packs into the app bundle...")
-    app_dynos_path = "build/Release-iphoneos/saturn.app/dynos"
-    if os.path.exists("dynos"):
-        if os.path.exists(app_dynos_path):
-            shutil.rmtree(app_dynos_path)
-        shutil.copytree("dynos", app_dynos_path)
-        print("[POST-BUILD] DynOS packs successfully embedded!")
+      - name: Download Assets from Windows Server
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-generated-assets
+          path: windows_assets
 
-if __name__ == "__main__":
-    self_install_deps()
-    setup_headers_and_mocks()
-    build_xcodegen_and_run()
+      - name: Merge Windows Assets into Mac Workspace
+        shell: bash
+        run: |
+          echo "Merging files from Windows into our iOS build directory..."
+          # Move the generated dynos folder (and any other assets) into the repo root
+          cp -a windows_assets/dynos ./dynos || true
+          
+      - name: Set Active Xcode Version
+        shell: bash
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install System Prerequisites
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        shell: bash
+        run: brew install make pkg-config coreutils xcodegen zip python-tk
+
+      - name: Step 1 - Execute Smart Validator & Auto-Patcher
+        shell: bash
+        run: python3 smart_validator.py
+
+      - name: Step 2 - Execute Environment Setup & Xcode Builder
+        shell: bash
+        run: python3 fix_and_build.py
+
+      - name: Step 3 - Package Output Artifacts
+        shell: bash
+        run: |
+          python3 -c "
+          import os, shutil, zipfile
+          app_path = 'build/Release-iphoneos/saturn.app'
+          os.makedirs('Payload', exist_ok=True)
+          if os.path.exists(app_path):
+              shutil.copytree(app_path, 'Payload/saturn.app')
+          with zipfile.ZipFile('saturn.ipa', 'w', zipfile.ZIP_DEFLATED) as zipf:
+              for root, _, files in os.walk('Payload'):
+                  for file in files:
+                      fp = os.path.join(root, file)
+                      zipf.write(fp, os.path.relpath(fp, '.'))
+          "
+
+      - name: Upload Compiled IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: saturn-ios-ipa
+          path: saturn.ipa
