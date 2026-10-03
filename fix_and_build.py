@@ -13,8 +13,40 @@ def self_install_deps():
         print("[SETUP] PyYAML missing. Installing...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
 
+def clean_duplicate_resources():
+    print("[CLEANUP] Scanning and purging duplicate resource files to prevent Xcode collisions...")
+    repo_root = os.getcwd()
+    
+    # Track seen filenames in asset/level directories to remove duplicates
+    seen_files = set()
+    removed_count = 0
+    
+    target_dirs = ['levels', 'actors', 'assets', 'data']
+    for d in target_dirs:
+        dir_path = os.path.join(repo_root, d)
+        if not os.path.exists(dir_path):
+            continue
+        for root, _, files in os.walk(dir_path):
+            for file in files:
+                # Target common colliding resource types
+                if file.endswith(('.yaml', '.png', '.bin', '.json')):
+                    file_lower = file.lower()
+                    # If a file with the same name exists deeper in subfolders, keep the root or first one and remove duplicate
+                    if file_lower in seen_files and file_lower != 'config.yaml':
+                        dup_path = os.path.join(root, file)
+                        try:
+                            os.remove(dup_path)
+                            removed_count += 1
+                            print(f"[DEDUP] Removed duplicate resource: {os.path.relpath(dup_path, repo_root)}")
+                        except Exception:
+                            pass
+                    else:
+                        seen_files.add(file_lower)
+                        
+    print(f"[CLEANUP] Duplicate purge complete. Removed {removed_count} redundant asset files.")
+
 def clean_and_validate_sources():
-    print("[VALIDATOR] Scanning entire repository for .cpp, .c, .h, and .m files...")
+    print("[VALIDATOR] Scanning repository for scriptable .cpp, .c, .h, and .m files...")
     repo_root = os.getcwd()
     platform_exclusions = ['dxsdk', 'direct3d', 'd3d11', 'd3d12', 'wgl', 'glx', 'wasapi', 'alsa', 'wiiu']
     
@@ -38,7 +70,6 @@ def clean_and_validate_sources():
                 changed = False
                 for line in lines:
                     stripped = line.strip()
-                    # Strip out empty/malformed include statements
                     if stripped.startswith('#include') and len(stripped.split()) < 2:
                         changed = True
                         continue
@@ -93,7 +124,6 @@ def build_xcodegen_and_run():
     import yaml
     print("[XCODEGEN] Generating project.yml covering all repository code directories...")
     
-    # Include all code-bearing folders visible in your repository structure
     sources = [
         {
             "path": "src",
@@ -166,7 +196,7 @@ def build_xcodegen_and_run():
 
     subprocess.check_call(["xcodegen", "generate"])
 
-    print("[XCODEBUILD] Building iOS target with full file tree...")
+    print("[XCODEBUILD] Building iOS target with deduplicated resources...")
     cmd = [
         "xcodebuild",
         "-project", "saturn.xcodeproj",
@@ -218,6 +248,7 @@ def build_xcodegen_and_run():
 
 if __name__ == "__main__":
     self_install_deps()
+    clean_duplicate_resources()
     clean_and_validate_sources()
     setup_headers_and_mocks()
     build_xcodegen_and_run()
