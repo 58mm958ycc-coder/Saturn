@@ -21,6 +21,31 @@ def restore_clean_repo():
     except Exception as e:
         print(f"[WARNING] Git reset error: {e}")
 
+def fix_broken_includes_in_all_files():
+    print("[SCANNER] Cleaning broken empty #include lines across codebase...")
+    repo_root = os.getcwd()
+    cleaned = 0
+    for root, _, files in os.walk(repo_root):
+        if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload']):
+            continue
+        for file in files:
+            if file.endswith(('.c', '.cpp', '.h', '.hpp', '.m', '.mm')):
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
+                    # Remove broken empty includes like "#include \n" or "#include \r\n"
+                    new_content = re.sub(r'#include\s*(\r?\n|\Z)', '', content)
+                    
+                    if new_content != content:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+                        cleaned += 1
+                except Exception:
+                    pass
+    print(f"[SCANNER] Purged empty includes in {cleaned} source files.")
+
 def create_info_plist():
     print("[PLIST] Creating Info.plist...")
     plist_data = {
@@ -39,16 +64,24 @@ def create_info_plist():
         plistlib.dump(plist_data, f)
 
 def generate_mock_headers():
-    print("[MOCKS] Generating global mock headers...")
+    print("[MOCKS] Generating global mock headers with explicit standard includes...")
     os.makedirs("include/PR", exist_ok=True)
     os.makedirs("include/SDL2", exist_ok=True)
 
-    with open("include/PR/ultratypes.h", "w") as f:
-        f.write("""#ifndef ULTRATYPES_H
-#define ULTRATYPES_H
-#include 
-#include 
+    inc_stddef = "#include " + "\n"
+    inc_stdint = "#include " + "\n"
+    inc_stdbool = "#include " + "\n"
+
+    with open("include/PR/ultratypes.h", "w", encoding="utf-8") as f:
+        f.write("#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\n")
+        f.write(inc_stddef)
+        f.write(inc_stdint)
+        f.write(inc_stdbool)
+        f.write("""
+#ifndef NON_MATCHING
 #define NON_MATCHING 1
+#endif
+
 typedef uint8_t  u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -62,12 +95,12 @@ typedef double   f64;
 #endif
 """)
 
-    with open("include/SDL2/SDL.h", "w") as f:
-        f.write("""#ifndef SDL_H
-#define SDL_H
-#include 
-#include 
-
+    with open("include/SDL2/SDL.h", "w", encoding="utf-8") as f:
+        f.write("#ifndef SDL_H\n#define SDL_H\n")
+        f.write(inc_stddef)
+        f.write(inc_stdint)
+        f.write(inc_stdbool)
+        f.write("""
 typedef struct SDL_Window SDL_Window;
 typedef void* SDL_GLContext;
 typedef struct SDL_Renderer SDL_Renderer;
@@ -108,7 +141,7 @@ void SDL_Delay(Uint32 ms);
 #endif
 """)
 
-    with open("include/PR/gbi.h", "w") as f:
+    with open("include/PR/gbi.h", "w", encoding="utf-8") as f:
         f.write("""#ifndef GBI_H
 #define GBI_H
 #include "ultratypes.h"
@@ -149,7 +182,7 @@ def generate_project_spec(extra_excludes=None):
     if extra_excludes is None:
         extra_excludes = []
 
-    base_asset_excludes = ["**/*.yaml", "**/*.png", "**/*.json", "**/*.bin", "**/*.a", "**/*.m64"] + extra_excludes
+    base_asset_excludes = ["**/*.yaml", "**/*.png", "**/*.json", "**/*.bin", "**/*.a", "**/*.m64"] + list(set(extra_excludes))
 
     sources = [
         {
@@ -165,20 +198,20 @@ def generate_project_spec(extra_excludes=None):
                 "pc/audio/audio_alsa.c"
             ]
         },
-        {
-            "path": "actors",
-            "excludes": base_asset_excludes
-        },
-        {
-            "path": "levels",
-            "excludes": base_asset_excludes
-        },
+        {"path": "actors", "excludes": base_asset_excludes},
+        {"path": "levels", "excludes": base_asset_excludes},
         {"path": "include"},
         {"path": "lib"}
     ]
 
     force_include_flags = [
         "-w",
+        "-DNON_MATCHING=1",
+        "-DVERSION_US=1",
+        "-DDYNOS=1",
+        "-DRAPI_GL=1",
+        "-DWAPI_SDL2=1",
+        "-DHAVE_SDL2=1",
         "-include", "include/PR/ultratypes.h",
         "-include", "include/PR/gbi.h",
         "-include", "include/SDL2/SDL.h"
@@ -236,23 +269,28 @@ def generate_project_spec(extra_excludes=None):
         }
     }
 
-    with open("project.yml", "w") as f:
+    with open("project.yml", "w", encoding="utf-8") as f:
         yaml.dump(project_spec, f, default_flow_style=False)
 
-def build_with_smart_retry():
+def continuous_smart_build_loop():
     extra_excludes = []
-    max_attempts = 5
+    iteration = 1
 
-    for attempt in range(1, max_attempts + 1):
+    while True:
         print(f"\n==================================================")
-        print(f"       SMART BUILD ATTEMPT {attempt} OF {max_attempts}")
+        print(f"       CONTINUOUS BUILD & PATCH LOOP: ITERATION {iteration}")
         print(f"==================================================")
 
+        # 1. Ensure mock headers and cleaned files are in place
+        fix_broken_includes_in_all_files()
+        generate_mock_headers()
         generate_project_spec(extra_excludes)
-        
-        print("[XCODEGEN] Generating Xcode project...")
+
+        # 2. Run XcodeGen
+        print("[XCODEGEN] Refreshing Xcode project...")
         subprocess.check_call(["xcodegen", "generate"])
 
+        # 3. Execute Xcode build and capture output
         print("[XCODEBUILD] Executing build...")
         cmd = [
             "xcodebuild",
@@ -272,37 +310,58 @@ def build_with_smart_retry():
 
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         build_output = []
-        
+
         for line in process.stdout:
             print(line, end="")
             build_output.append(line)
-            
+
         process.wait()
 
         if process.returncode == 0:
-            print("\n[SUCCESS] Xcode build succeeded!")
+            print("\n==================================================")
+            print(" [SUCCESS] Xcode build completed with ZERO errors!")
+            print("==================================================")
             return True
 
+        # 4. Error Analysis & Auto-Patching
         full_log = "".join(build_output)
-        print(f"\n[BUILD ERROR DETECTED] Analyzing log to patch project spec...")
+        print("\n[BUILD FAILED] Analyzing logs to auto-repair issues...")
 
-        # Pattern 1: Multiple commands produce / duplicate resource collision
-        if "Multiple commands produce" in full_log or "duplicate output file" in full_log:
-            print("[AUTO-REMEDY] Detected resource file collision. Adding extra exclusions...")
-            matches = re.findall(r"Multiple commands produce '.*?/saturn\.app/(.*?)'", full_log)
-            for file_name in matches:
-                pattern = f"**/{file_name}"
+        patched_something = False
+
+        # Repair 1: Resource Collision ("Multiple commands produce" or "duplicate output file")
+        collisions = re.findall(r"Multiple commands produce '.*?/saturn\.app/(.*?)'", full_log)
+        collisions += re.findall(r"duplicate output file '.*?/saturn\.app/(.*?)'", full_log)
+        if collisions:
+            for item in set(collisions):
+                pattern = f"**/{item}"
                 if pattern not in extra_excludes:
                     extra_excludes.append(pattern)
-            if not matches:
-                extra_excludes.append("**/*.yaml")
-            continue
+                    print(f"[AUTO-FIX] Added build exclusion for colliding resource: {pattern}")
+                    patched_something = True
 
-        # Pattern 2: Unhandled error type - break loop
-        print("[AUTO-REMEDY] Unrecognized fatal build error encountered.")
-        break
+        # Repair 2: Check for broken include syntax errors in specific files
+        error_files = re.findall(r"(/[^:\n]+):\d+:\d+: error:", full_log)
+        if error_files:
+            for filepath in set(error_files):
+                if os.path.exists(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                            c = f.read()
+                        new_c = re.sub(r'#include\s*(\r?\n|\Z)', '', c)
+                        if new_c != c:
+                            with open(filepath, 'w', encoding='utf-8') as f:
+                                f.write(new_c)
+                            print(f"[AUTO-FIX] Repaired broken #include syntax in: {filepath}")
+                            patched_something = True
+                    except Exception:
+                        pass
 
-    return False
+        iteration += 1
+
+        if not patched_something and iteration > 30:
+            print("[FATAL] Maximum repair iterations reached without progress.")
+            return False
 
 def package_ipa():
     print("[POST-BUILD] Embedding DynOS asset packs...")
@@ -312,7 +371,7 @@ def package_ipa():
             shutil.rmtree(app_dynos_path)
         shutil.copytree("dynos", app_dynos_path)
 
-    print("[PACKAGING] Packaging saturn.ipa...")
+    print("[PACKAGING] Generating saturn.ipa package...")
     payload_dir = "Payload"
     if os.path.exists(payload_dir):
         shutil.rmtree(payload_dir)
@@ -333,10 +392,8 @@ if __name__ == "__main__":
     install_deps()
     restore_clean_repo()
     create_info_plist()
-    generate_mock_headers()
     
-    if build_with_smart_retry():
+    if continuous_smart_build_loop():
         package_ipa()
     else:
-        print("[FATAL] Smart build loop failed to fix all build errors.")
         sys.exit(1)
