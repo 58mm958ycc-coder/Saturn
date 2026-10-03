@@ -77,12 +77,8 @@ jobs:
             echo "# Auto-generated level rules" > levels/level_rules.mk
           fi
 
-          # Dynamically locate ultratypes.h or use stub fallback
-          ULTRA_PATH=$(find . -name "ultratypes.h" -type f | head -n 1)
-          if [ -n "\(ULTRA_PATH" ] && [ "\)ULTRA_PATH" != "./include/PR/ultratypes.h" ]; then
-            cp "$ULTRA_PATH" include/PR/ultratypes.h
-          elif [ ! -f "include/PR/ultratypes.h" ]; then
-            cat << 'EOF' > include/PR/ultratypes.h
+          # Unconditionally generate safe ultratypes.h stub (no cp commands)
+          cat << 'EOF' > include/PR/ultratypes.h
           #ifndef ULTRATYPES_H
           #define ULTRATYPES_H
           #include 
@@ -99,14 +95,9 @@ jobs:
           typedef double   f64;
           #endif
           EOF
-          fi
 
-          # Dynamically locate SDL.h or use stub fallback
-          SDL_PATH=$(find . -name "SDL.h" -type f | head -n 1)
-          if [ -n "\(SDL_PATH" ] && [ "\)SDL_PATH" != "./include/SDL2/SDL.h" ]; then
-            cp "$SDL_PATH" include/SDL2/SDL.h
-          elif [ ! -f "include/SDL2/SDL.h" ]; then
-            cat << 'EOF' > include/SDL2/SDL.h
+          # Unconditionally generate extended SDL.h stub (no cp commands)
+          cat << 'EOF' > include/SDL2/SDL.h
           #ifndef SDL_H
           #define SDL_H
           #include 
@@ -115,9 +106,14 @@ jobs:
           typedef uint8_t  Uint8;
           typedef uint16_t Uint16;
           typedef int32_t  Sint32;
+          
+          /* Scaffold types needed by saturn.h and saturn_imgui.h */
+          typedef struct SDL_Window SDL_Window;
+          typedef void* SDL_GLContext;
+          typedef union SDL_Event { uint32_t type; } SDL_Event;
+          typedef int SDL_Scancode;
           #endif
           EOF
-          fi
           
           if [ ! -f "src/saturn/saturn_timelines.h" ]; then
             printf "#ifndef SATURN_TIMELINES_H\n#define SATURN_TIMELINES_H\n\n#include \n\n#endif\n" > src/saturn/saturn_timelines.h
@@ -216,7 +212,7 @@ jobs:
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Force CFLAGS Include Fix)
+      - name: Step 5 - Create Xcode Spec Generator (Inject NON_MATCHING Macro)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -240,7 +236,6 @@ jobs:
                       
                       if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
                           sources.append(rel_path)
-                      # Strictly exclude .py, .sh from being packed into the iOS application bundle
                       elif ext in ('.ini', '.json', '.z64', '.png', '.jpg', '.wav', '.mp3'):
                           if file not in registered_resource_names:
                               registered_resource_names.add(file)
@@ -277,8 +272,8 @@ jobs:
                               "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
                               "CLANG_CXX_LIBRARY": "libc++",
                               "HEADER_SEARCH_PATHS": ["\((inherited)", "\)(SRCROOT)/include", "\((SRCROOT)/src", "\)(SRCROOT)"],
-                              "OTHER_CFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)"],
-                              "OTHER_CPLUSPLUSFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)"]
+                              "OTHER_CFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)", "-DNON_MATCHING=1"],
+                              "OTHER_CPLUSPLUSFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)", "-DNON_MATCHING=1"]
                           }
                       }
                   }
