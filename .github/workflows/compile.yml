@@ -21,11 +21,15 @@ jobs:
           xcodebuild -version
 
       - name: Install Build Prerequisites & XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        shell: bash
         run: |
-          brew update
           brew install make pkg-config sdl2 jsoncpp coreutils xcodegen
 
       - name: Create Universal Pip Installer Script
+        shell: bash
         run: |
           cat << 'EOF' > install_pips.py
           import subprocess
@@ -53,6 +57,7 @@ jobs:
           python3 install_pips.py
 
       - name: Scaffold & Download Missing Files (Auto-Fixer)
+        shell: bash
         run: |
           mkdir -p build/us_pc/src/engine build/us_ios levels src/engine
           
@@ -68,60 +73,111 @@ jobs:
           echo "Mock Rom Content" > baserom.us.z64
           echo "Mock DLL Content" > discord_sdk.dll
 
-      - name: Create Python Script
+      - name: Create Dynamic Source Extractor & YML Generator
+        shell: bash
         run: |
-          cat << 'EOF' > cpp_c_h_finder.py
+          cat << 'EOF' > build_generator.py
           import os
-          import time
+          import json
+          import yaml
 
-          def create_and_rename_files():
+          def generate_source_files():
               blueprints = [
                   ("custom_controls", ".cpp", "#include \nvoid initTouchControls() {\n    std::cout << \"Touch widgets initialized!\" << std::endl;\n}"),
                   ("custom_controls", ".h", "#ifndef CUSTOM_CONTROLS_H\n#define CUSTOM_CONTROLS_H\nvoid initTouchControls();\n#endif"),
                   ("ios_patch_helper", ".c", "#include \nvoid applyIOSPatches() {\n    printf(\"Mobile rendering hooks active.\\n\");\n}"),
               ]
-              generated_text_paths = []
               for filename, ext, content in blueprints:
-                  txt_filename = f"{filename}_{ext.replace('.', '')}.txt"
-                  with open(txt_filename, "w") as f:
-                      f.write(content)
-                  generated_text_paths.append((txt_filename, f"{filename}{ext}"))
-              
-              time.sleep(0.5)
-              for txt_file, target_file in generated_text_paths:
-                  if os.path.exists(txt_file):
-                      os.rename(txt_file, target_file)
+                  target = f"{filename}{ext}"
+                  if not os.path.exists(target):
+                      with open(target, "w") as f:
+                          f.write(content)
+                      print(f"[GENERATED SOURCE] {target}")
 
-          def find_source_files(root_dir):
-              extensions = ('.c', '.cpp', '.h', '.hpp', '.m', '.mm', '.swift', '.py', '.sh', '.json', '.dll', '.z64')
-              found_files = []
+          def scan_repository(root_dir):
+              extensions = ('.c', '.cpp', '.cxx', '.cc', '.h', '.hpp', '.m', '.mm', '.swift')
+              sources = []
+              header_dirs = set()
+
               for root, dirs, files in os.walk(root_dir):
-                  if 'build' in root or '.git' in root: continue
+                  if 'build' in root or '.git' in root or 'DerivedData' in root:
+                      continue
                   for file in files:
                       if file.lower().endswith(extensions):
-                          found_files.append((file, os.path.join(root, file)))
-              return found_files
+                          rel_path = os.path.relpath(os.path.join(root, file), root_dir)
+                          sources.append(rel_path)
+                          if file.lower().endswith(('.h', '.hpp')):
+                              header_dirs.add(os.path.dirname(rel_path) or '.')
+
+              return sources, sorted(list(header_dirs))
+
+          def write_sources_manifest(sources, header_dirs):
+              manifest = {
+                  "meta": "Auto-extracted C/C++/Obj-C/Swift source registry",
+                  "total_files": len(sources),
+                  "header_directories": header_dirs,
+                  "discovered_sources": sources
+              }
+              with open("sources_manifest.yml", "w") as f:
+                  yaml.dump(manifest, f, default_flow_style=False)
+              print(f"[MANIFEST CREATED] Exported {len(sources)} source references to sources_manifest.yml")
+
+          def write_xcodegen_config(sources, header_dirs):
+              header_paths = ["/opt/homebrew/include", "/opt/homebrew/include/SDL2", "$(SRCROOT)"]
+              for hd in header_dirs:
+                  formatted = f"\((SRCROOT)/{hd}" if hd != '.' else "\)(SRCROOT)"
+                  if formatted not in header_paths:
+                      header_paths.append(formatted)
+
+              project_spec = {
+                  "name": "saturn",
+                  "options": {
+                      "bundleIdPrefix": "com.saturn"
+                  },
+                  "targets": {
+                      "saturn": {
+                          "type": "application",
+                          "platform": "iOS",
+                          "deploymentTarget": "14.0",
+                          "sources": [{"path": src, "optional": True} for src in sources],
+                          "settings": {
+                              "ENABLE_BITCODE": "NO",
+                              "CODE_SIGNING_ALLOWED": "NO",
+                              "CODE_SIGNING_REQUIRED": "NO",
+                              "HEADER_SEARCH_PATHS": header_paths,
+                              "LIBRARY_SEARCH_PATHS": ["/opt/homebrew/lib"]
+                          }
+                      }
+                  }
+              }
+
+              with open("project.yml", "w") as f:
+                  yaml.dump(project_spec, f, default_flow_style=False)
+              print("[XCODEGEN SPEC GENERATED] project.yml updated dynamically with extracted sources.")
 
           def main():
-              create_and_rename_files()
+              generate_source_files()
               workspace = os.getcwd()
-              sources = find_source_files(workspace)
-              for name, path in sources:
-                  print(f"Found file: '{os.path.relpath(path, workspace)}'")
+              sources, header_dirs = scan_repository(workspace)
+              write_sources_manifest(sources, header_dirs)
+              write_xcodegen_config(sources, header_dirs)
 
           if __name__ == '__main__':
               main()
           EOF
 
-      - name: Run Python Factory & Source Discovery Scanner
-        run: python3 ./cpp_c_h_finder.py
+      - name: Run Source Extractor & YAML Generator
+        shell: bash
+        run: python3 ./build_generator.py
 
       - name: Patch Makefiles for Apple Preprocessor
+        shell: bash
         run: |
           find . -name "Makefile*" -type f -exec sed -i '' 's/-I \./-I\./g' {} + || true
           find . -name "*.split" -type f -exec sed -i '' 's/-I \./-I\./g' {} + || true
 
       - name: Compile Makefiles (Hardcoded Paths)
+        shell: bash
         run: |
           if [ -f "./build_ios.sh" ]; then
             chmod +x ./build_ios.sh
@@ -132,39 +188,12 @@ jobs:
             echo "No Makefile or build_ios.sh found."
           fi
 
-      - name: Auto-Generate Xcode Project (If Missing)
-        run: |
-          XCODE_PATH=$(find . -name "*.xcworkspace" -o -name "*.xcodeproj" | head -n 1)
-          if [ -z "$XCODE_PATH" ]; then
-            cat << 'EOF' > project.yml
-            name: saturn
-            options:
-              bundleIdPrefix: com.saturn
-            targets:
-              saturn:
-                type: application
-                platform: iOS
-                deploymentTarget: "14.0"
-                sources:
-                  - path: src
-                    optional: true
-                  - path: levels
-                    optional: true
-                  - path: custom_controls.cpp
-                    optional: true
-                  - path: ios_patch_helper.c
-                    optional: true
-                settings:
-                  ENABLE_BITCODE: NO
-                  CODE_SIGNING_ALLOWED: NO
-                  CODE_SIGNING_REQUIRED: NO
-                  HEADER_SEARCH_PATHS: ["/opt/homebrew/include", "/opt/homebrew/include/SDL2"]
-                  LIBRARY_SEARCH_PATHS: ["/opt/homebrew/lib"]
-            EOF
-            xcodegen generate
-          fi
+      - name: Generate Xcode Project via XcodeGen
+        shell: bash
+        run: xcodegen generate
 
       - name: Build with xcodebuild
+        shell: bash
         run: |
           XCODE_PATH=$(find . -name "*.xcworkspace" -o -name "*.xcodeproj" | head -n 1)
           echo "Compiling generated architecture at: $XCODE_PATH"
@@ -185,6 +214,7 @@ jobs:
             clean build || echo "Xcodebuild completed."
 
       - name: Package App to IPA (Universal Finder)
+        shell: bash
         run: |
           mkdir -p Payload
           APP_BUNDLE=$(find . -type d -name "*.app" | head -n 1)
