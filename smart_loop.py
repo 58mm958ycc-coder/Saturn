@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import plistlib
 import zipfile
+import re
 
 def install_deps():
     try:
@@ -13,15 +14,15 @@ def install_deps():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
 
 def restore_clean_repo():
-    print("[CLEANUP] Resetting repository to undo source file modifications...")
+    print("[CLEANUP] Resetting git workspace to clean state...")
     try:
         subprocess.run(["git", "reset", "--hard", "HEAD"], check=True)
         subprocess.run(["git", "clean", "-fd"], check=True)
     except Exception as e:
-        print(f"[WARNING] Could not reset git tree: {e}")
+        print(f"[WARNING] Git reset error: {e}")
 
 def create_info_plist():
-    print("[PLIST] Creating Info.plist for iOS bundle...")
+    print("[PLIST] Creating Info.plist...")
     plist_data = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleExecutable": "saturn",
@@ -143,10 +144,13 @@ typedef union {
 #endif
 """)
 
-def trigger_xcode_build():
+def generate_project_spec(extra_excludes=None):
     import yaml
-    print("[XCODEGEN] Configuring Xcode project with global force-includes...")
-    
+    if extra_excludes is None:
+        extra_excludes = []
+
+    base_asset_excludes = ["**/*.yaml", "**/*.png", "**/*.json", "**/*.bin", "**/*.a", "**/*.m64"] + extra_excludes
+
     sources = [
         {
             "path": "src",
@@ -161,13 +165,18 @@ def trigger_xcode_build():
                 "pc/audio/audio_alsa.c"
             ]
         },
-        {"path": "actors"},
-        {"path": "levels"},
+        {
+            "path": "actors",
+            "excludes": base_asset_excludes
+        },
+        {
+            "path": "levels",
+            "excludes": base_asset_excludes
+        },
         {"path": "include"},
         {"path": "lib"}
     ]
 
-    # Global Clang flags to force include mock headers everywhere automatically
     force_include_flags = [
         "-w",
         "-include", "include/PR/ultratypes.h",
@@ -177,7 +186,10 @@ def trigger_xcode_build():
 
     project_spec = {
         "name": "saturn",
-        "options": {"bundleIdPrefix": "com.saturn"},
+        "options": {
+            "bundleIdPrefix": "com.saturn",
+            "createIntermediateGroups": True
+        },
         "settings": {
             "GCC_PREPROCESSOR_DEFINITIONS": [
                 "NON_MATCHING=1",
@@ -226,35 +238,73 @@ def trigger_xcode_build():
 
     with open("project.yml", "w") as f:
         yaml.dump(project_spec, f, default_flow_style=False)
+
+def build_with_smart_retry():
+    extra_excludes = []
+    max_attempts = 5
+
+    for attempt in range(1, max_attempts + 1):
+        print(f"\n==================================================")
+        print(f"       SMART BUILD ATTEMPT {attempt} OF {max_attempts}")
+        print(f"==================================================")
+
+        generate_project_spec(extra_excludes)
         
-    subprocess.check_call(["xcodegen", "generate"])
+        print("[XCODEGEN] Generating Xcode project...")
+        subprocess.check_call(["xcodegen", "generate"])
 
-    print("[XCODEBUILD] Building iOS target...")
-    cmd = [
-        "xcodebuild",
-        "-project", "saturn.xcodeproj",
-        "-scheme", "saturn",
-        "-configuration", "Release",
-        "-sdk", "iphoneos",
-        "ARCHS=arm64",
-        "ONLY_ACTIVE_ARCH=NO",
-        "CODE_SIGNING_ALLOWED=NO",
-        "CODE_SIGN_IDENTITY=",
-        "CODE_SIGNING_REQUIRED=NO",
-        "CONFIGURATION_BUILD_DIR=build/Release-iphoneos",
-        "clean",
-        "build"
-    ]
-    
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-    for line in process.stdout:
-        print(line, end="")
-    process.wait()
-    
-    if process.returncode != 0:
-        print(f"[XCODEBUILD ERROR] Build failed with exit code {process.returncode}")
-        sys.exit(1)
+        print("[XCODEBUILD] Executing build...")
+        cmd = [
+            "xcodebuild",
+            "-project", "saturn.xcodeproj",
+            "-scheme", "saturn",
+            "-configuration", "Release",
+            "-sdk", "iphoneos",
+            "ARCHS=arm64",
+            "ONLY_ACTIVE_ARCH=NO",
+            "CODE_SIGNING_ALLOWED=NO",
+            "CODE_SIGN_IDENTITY=",
+            "CODE_SIGNING_REQUIRED=NO",
+            "CONFIGURATION_BUILD_DIR=build/Release-iphoneos",
+            "clean",
+            "build"
+        ]
 
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+        build_output = []
+        
+        for line in process.stdout:
+            print(line, end="")
+            build_output.append(line)
+            
+        process.wait()
+
+        if process.returncode == 0:
+            print("\n[SUCCESS] Xcode build succeeded!")
+            return True
+
+        full_log = "".join(build_output)
+        print(f"\n[BUILD ERROR DETECTED] Analyzing log to patch project spec...")
+
+        # Pattern 1: Multiple commands produce / duplicate resource collision
+        if "Multiple commands produce" in full_log or "duplicate output file" in full_log:
+            print("[AUTO-REMEDY] Detected resource file collision. Adding extra exclusions...")
+            matches = re.findall(r"Multiple commands produce '.*?/saturn\.app/(.*?)'", full_log)
+            for file_name in matches:
+                pattern = f"**/{file_name}"
+                if pattern not in extra_excludes:
+                    extra_excludes.append(pattern)
+            if not matches:
+                extra_excludes.append("**/*.yaml")
+            continue
+
+        # Pattern 2: Unhandled error type - break loop
+        print("[AUTO-REMEDY] Unrecognized fatal build error encountered.")
+        break
+
+    return False
+
+def package_ipa():
     print("[POST-BUILD] Embedding DynOS asset packs...")
     app_dynos_path = "build/Release-iphoneos/saturn.app/dynos"
     if os.path.exists("dynos"):
@@ -262,26 +312,31 @@ def trigger_xcode_build():
             shutil.rmtree(app_dynos_path)
         shutil.copytree("dynos", app_dynos_path)
 
-    print("[PACKAGING] Generating saturn.ipa...")
+    print("[PACKAGING] Packaging saturn.ipa...")
     payload_dir = "Payload"
     if os.path.exists(payload_dir):
         shutil.rmtree(payload_dir)
     os.makedirs(payload_dir)
-    
+
     shutil.copytree("build/Release-iphoneos/saturn.app", os.path.join(payload_dir, "saturn.app"))
-    
+
     with zipfile.ZipFile("saturn.ipa", "w", zipfile.ZIP_DEFLATED) as ipa:
         for root, _, files in os.walk(payload_dir):
             for file in files:
                 abs_path = os.path.join(root, file)
                 rel_path = os.path.relpath(abs_path, payload_dir)
                 ipa.write(abs_path, os.path.join("Payload", rel_path))
-                
-    print("[SUCCESS] saturn.ipa generated!")
+
+    print("[COMPLETED] saturn.ipa generated successfully!")
 
 if __name__ == "__main__":
     install_deps()
     restore_clean_repo()
     create_info_plist()
     generate_mock_headers()
-    trigger_xcode_build()
+    
+    if build_with_smart_retry():
+        package_ipa()
+    else:
+        print("[FATAL] Smart build loop failed to fix all build errors.")
+        sys.exit(1)
