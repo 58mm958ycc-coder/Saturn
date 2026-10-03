@@ -44,9 +44,8 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating iOS project.yml, excluding Windows/Desktop backends...")
+    print("[XCODEGEN] Generating iOS project.yml with C++17 and proper definitions...")
     
-    # Exclude Windows/DirectX/Desktop-only source files from compilation
     sources = [
         {
             "path": "src",
@@ -71,11 +70,11 @@ def build_xcodegen_and_run():
         "settings": {
             "GCC_PREPROCESSOR_DEFINITIONS": [
                 "NON_MATCHING=1",
-                "DYNOS",
+                "DYNOS=1",
                 "RAPI_GL=1",
                 "WAPI_SDL2=1",
                 "HAVE_SDL2=1",
-                "VERSION_US",
+                "VERSION_US=1",
                 "$(inherited)"
             ],
             "HEADER_SEARCH_PATHS": [
@@ -89,7 +88,9 @@ def build_xcodegen_and_run():
             "LIBRARY_SEARCH_PATHS": [
                 "$(inherited)",
                 "/opt/homebrew/lib"
-            ]
+            ],
+            "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
+            "CLANG_CXX_LIBRARY": "libc++"
         },
         "targets": {
             "saturn": {
@@ -114,7 +115,7 @@ def build_xcodegen_and_run():
     print("[XCODEGEN] Running xcodegen generate...")
     subprocess.check_call(["xcodegen", "generate"])
 
-    print("[XCODEBUILD] Building iOS target (with live output streaming)...")
+    print("[XCODEBUILD] Building iOS target...")
     cmd = [
         "xcodebuild",
         "-project", "saturn.xcodeproj",
