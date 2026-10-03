@@ -16,8 +16,6 @@ def self_install_deps():
 def clean_duplicate_resources():
     print("[CLEANUP] Scanning and purging duplicate resource files to prevent Xcode collisions...")
     repo_root = os.getcwd()
-    
-    # Track seen filenames in asset/level directories to remove duplicates
     seen_files = set()
     removed_count = 0
     
@@ -28,16 +26,13 @@ def clean_duplicate_resources():
             continue
         for root, _, files in os.walk(dir_path):
             for file in files:
-                # Target common colliding resource types
                 if file.endswith(('.yaml', '.png', '.bin', '.json')):
                     file_lower = file.lower()
-                    # If a file with the same name exists deeper in subfolders, keep the root or first one and remove duplicate
                     if file_lower in seen_files and file_lower != 'config.yaml':
                         dup_path = os.path.join(root, file)
                         try:
                             os.remove(dup_path)
                             removed_count += 1
-                            print(f"[DEDUP] Removed duplicate resource: {os.path.relpath(dup_path, repo_root)}")
                         except Exception:
                             pass
                     else:
@@ -102,8 +97,9 @@ def setup_headers_and_mocks():
     with open("include/SDL2/SDL.h", "w") as f:
         f.write("#ifndef SDL_H\n#define SDL_H\n#include \ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef int SDL_bool;\ntypedef int SDL_Keycode;\ntypedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;\ntypedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;\ntypedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;\ntypedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;\ntypedef int SDL_Scancode;\n#define SDL_KEYDOWN 0x300\n#define SDL_MOUSEMOTION 0x400\n#define SDLK_m 'm'\n#define SDLK_n 'n'\n#define SDL_WINDOWPOS_CENTERED 0x2FFF0000\n#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_ENTIONS \"SDL_JOYSTICK_ALLOW_BACKGROUND_ENTIONS\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nconst char* SDL_GetScancodeName(SDL_Scancode scancode);\nvoid SDL_SetWindowSize(void* window, int w, int h);\nvoid SDL_SetWindowPosition(void* window, int x, int y);\nSDL_bool SDL_SetHint(const char* name, const char* value);\nvoid SDL_Delay(Uint32 ms);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
 
+    # Added forward declarations for Gfx, Mtx, and Vp to fix graph_node.h and area.h compilation errors
     with open("include/PR/gbi.h", "w") as f:
-        f.write("#ifndef GBI_H\n#define GBI_H\n#define G_TRI2 0xb1\n#endif\n")
+        f.write("#ifndef GBI_H\n#define GBI_H\n#define G_TRI2 0xb1\n#ifdef __cplusplus\nextern \"C\" {\n#endif\ntypedef struct Gfx Gfx;\ntypedef struct Mtx Mtx;\ntypedef struct Vp Vp;\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
 
     plist_data = {
         "CFBundleDevelopmentRegion": "en",
@@ -196,7 +192,7 @@ def build_xcodegen_and_run():
 
     subprocess.check_call(["xcodegen", "generate"])
 
-    print("[XCODEBUILD] Building iOS target with deduplicated resources...")
+    print("[XCODEBUILD] Building iOS target...")
     cmd = [
         "xcodebuild",
         "-project", "saturn.xcodeproj",
