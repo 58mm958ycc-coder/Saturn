@@ -2,7 +2,7 @@ name: Auto-Compile iOS App
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, legacy ]
   workflow_dispatch:
 
 jobs:
@@ -22,9 +22,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run Auto-Validator & Build Pipeline
+      - name: Run Smart Auto-Patcher & Build Pipeline
         run: |
-          python3 fix_and_build.py
+          python3 smart_loop.py
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
