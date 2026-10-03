@@ -317,7 +317,7 @@ jobs:
                       if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload']):
                           continue
                       for file in files:
-                        if os.path.splitext(file)[1].lower() in allowed_exts or file in ["project.yml", "Info.plist", "imgui.ini"]:
+                          if os.path.splitext(file)[1].lower() in allowed_exts or file in ["project.yml", "Info.plist", "imgui.ini"]:
                               full_path = os.path.join(root, file)
                               zipf.write(full_path, os.path.relpath(full_path, start="."))
 
@@ -327,6 +327,10 @@ jobs:
               create_ipa()
               create_xcode_source_zip()
           EOF
+
+      - name: Install Python Dependencies (PyYAML)
+        shell: bash
+        run: pip install pyyaml --break-system-packages
 
       - name: Run Force-Build Script
         shell: bash
