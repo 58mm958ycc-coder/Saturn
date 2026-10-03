@@ -57,21 +57,18 @@ jobs:
           def install(package):
               try:
                   subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--break-system-packages"])
-                  print(f"[PIP INSTALLED] {package}")
               except Exception as e:
-                  print(f"[PIP ERROR] Failed to install {package}: {e}")
+                  print(f"[PIP ERROR] Failed to install {package}")
 
           if __name__ == '__main__':
-              print("--- Initializing PIP Environment ---")
               packages = ["requests", "urllib3", "beautifulsoup4", "numpy", "pillow", "colorama", "pyyaml", "lxml"]
               subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--break-system-packages"])
               for pkg in packages:
                   install(pkg)
-              print("--- PIP Environment Ready ---")
           EOF
           python3 install_pips.py
 
-      - name: Step 2 - Scaffold ImGui, Missing Headers & Native Source Files
+      - name: Step 2 - Scaffold ImGui, Headers & Native Source Files
         shell: bash
         run: |
           mkdir -p build/us_pc/src/engine build/us_ios levels src/engine src/imgui src/saturn include/PR include/SDL2
@@ -80,67 +77,58 @@ jobs:
             echo "# Auto-generated level rules" > levels/level_rules.mk
           fi
 
-          # Ensure PR/ultratypes.h stub exists
-          if [ ! -f "include/PR/ultratypes.h" ]; then
+          # Dynamically locate ultratypes.h or use stub fallback
+          ULTRA_PATH=$(find . -name "ultratypes.h" -type f | head -n 1)
+          if [ -n "\(ULTRA_PATH" ] && [ "\)ULTRA_PATH" != "./include/PR/ultratypes.h" ]; then
+            cp "$ULTRA_PATH" include/PR/ultratypes.h
+          elif [ ! -f "include/PR/ultratypes.h" ]; then
             cat << 'EOF' > include/PR/ultratypes.h
           #ifndef ULTRATYPES_H
           #define ULTRATYPES_H
-
           #include 
           #include 
-
           typedef uint8_t  u8;
           typedef uint16_t u16;
           typedef uint32_t u32;
           typedef uint64_t u64;
-
           typedef int8_t   s8;
           typedef int16_t  s16;
           typedef int32_t  s32;
           typedef int64_t  s64;
-
           typedef float    f32;
           typedef double   f64;
-
           #endif
           EOF
-            echo "[SCAFFOLD] Created include/PR/ultratypes.h"
           fi
 
-          # Ensure SDL2/SDL.h stub exists
-          if [ ! -f "include/SDL2/SDL.h" ]; then
+          # Dynamically locate SDL.h or use stub fallback
+          SDL_PATH=$(find . -name "SDL.h" -type f | head -n 1)
+          if [ -n "\(SDL_PATH" ] && [ "\)SDL_PATH" != "./include/SDL2/SDL.h" ]; then
+            cp "$SDL_PATH" include/SDL2/SDL.h
+          elif [ ! -f "include/SDL2/SDL.h" ]; then
             cat << 'EOF' > include/SDL2/SDL.h
           #ifndef SDL_H
           #define SDL_H
-
           #include 
           #include 
-
           typedef uint32_t Uint32;
           typedef uint8_t  Uint8;
           typedef uint16_t Uint16;
           typedef int32_t  Sint32;
-
           #endif
           EOF
-            echo "[SCAFFOLD] Created include/SDL2/SDL.h"
           fi
           
-          # Ensure saturn header stubs exist
           if [ ! -f "src/saturn/saturn_timelines.h" ]; then
             printf "#ifndef SATURN_TIMELINES_H\n#define SATURN_TIMELINES_H\n\n#include \n\n#endif\n" > src/saturn/saturn_timelines.h
-            echo "[SCAFFOLD] Created src/saturn/saturn_timelines.h"
           fi
 
           if [ ! -f "src/saturn/saturn_textures.h" ]; then
             printf "#ifndef SATURN_TEXTURES_H\n#define SATURN_TEXTURES_H\n\n#include \n\n#endif\n" > src/saturn/saturn_textures.h
-            echo "[SCAFFOLD] Created src/saturn/saturn_textures.h"
           fi
 
           if [ ! -f "src/engine/behavior_script.c" ]; then
-            echo "#include " > src/engine/behavior_script.c
-            echo "void stub_behavior_script() { printf(\"Behavior stub loaded.\n\"); }" >> src/engine/behavior_script.c
-            echo "[SCAFFOLD] Created src/engine/behavior_script.c"
+            echo "void stub_behavior_script() {}" > src/engine/behavior_script.c
           fi
 
           if [ ! -f "imgui.ini" ]; then
@@ -149,48 +137,21 @@ jobs:
           Pos=20,20
           Size=450,280
           Collapsed=0
-
-          [Window][Touch Overlay Stats]
-          Pos=20,310
-          Size=300,150
-          Collapsed=0
           EOF
-            echo "[SCAFFOLD] Created imgui.ini layout config."
           fi
 
           if [ ! -f "src/imgui/imgui_widgets.cpp" ]; then
             cat << 'EOF' > src/imgui/imgui_widgets.cpp
           #include 
-          #include 
-
-          void RenderSaturnDebugUI() {
-              std::cout << "[ImGui Widget] Rendering Saturn iOS debug UI..." << std::endl;
-              std::ifstream iniFile("imgui.ini");
-              if (iniFile.is_open()) {
-                  std::cout << "[ImGui Widget] Successfully read imgui.ini settings." << std::endl;
-              } else {
-                  std::cout << "[ImGui Widget] Warning: imgui.ini missing from bundle." << std::endl;
-              }
-          }
+          void RenderSaturnDebugUI() {}
           EOF
-            echo "[SCAFFOLD] Created src/imgui/imgui_widgets.cpp"
           fi
 
           if [ ! -f "extract_assets.py" ]; then
-            cat << 'EOF' > extract_assets.py
-          import os
-
-          def extract_game_assets():
-              print("[EXTRACTOR] Unpacking baserom assets...")
-              return ["baserom.us.z64", "discord_game_sdk.dll", "imgui.ini"]
-
-          if __name__ == '__main__':
-              extract_game_assets()
-          EOF
-            echo "[SCAFFOLD] Created extract_assets.py"
+            echo "def extract_game_assets(): return []" > extract_assets.py
           fi
 
-          dd if=/dev/urandom of=baserom.us.z64 bs=1M count=12 2>/dev/null || echo "ROM placeholder created"
+          dd if=/dev/urandom of=baserom.us.z64 bs=1M count=12 2>/dev/null || true
           echo "Mock SDK DLL" > discord_game_sdk.dll
 
       - name: Step 3 - Python Script Analyzer & iOS Refactorer
@@ -198,72 +159,41 @@ jobs:
         run: |
           cat << 'EOF' > refactor_python_scripts.py
           import os
+          import yaml
 
           def analyze_and_refactor():
-              print("--- Inspecting and Refactoring Python Scripts for iOS ---")
-              ignored_scripts = [
-                  "install_pips.py", "refactor_python_scripts.py", 
-                  "create_plist.py", "generate_xcodegen_spec.py", 
-                  "run_xcode_build.py", "package_artifacts.py"
-              ]
-              
+              ignored_scripts = ["install_pips.py", "refactor_python_scripts.py", "create_plist.py", "generate_xcodegen_spec.py", "run_xcode_build.py", "package_artifacts.py"]
               target_refactored_name = "extract_assets_send_to_ymlfile.py"
-              target_created = False
+              
+              refactored_content = """# Auto-refactored for iOS Manifest Injection
+          import yaml
+          def extract_assets_and_register_yml():
+              with open("assets_manifest.yml", "w") as f:
+                  yaml.dump({"extracted_assets": ["baserom.us.z64", "discord_game_sdk.dll", "imgui.ini"], "status": "ready_for_ios_bundle"}, f)
+          if __name__ == '__main__':
+              extract_assets_and_register_yml()
+          """
+              with open(target_refactored_name, "w") as f:
+                  f.write(refactored_content)
 
               for root, dirs, files in os.walk("."):
                   if 'build' in root or '.git' in root or 'DerivedData' in root:
                       continue
                   for file in files:
-                      if file.endswith(".py") and file not in ignored_scripts:
-                          file_path = os.path.join(root, file)
-                          with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                              content = f.read()
-
-                          if "extract" in file or "assets" in content or "baserom" in content:
-                              if not target_created:
-                                  refactored_content = """# Auto-refactored for iOS Manifest Injection
-          import os
-          import yaml
-
-          def extract_assets_and_register_yml():
-              print("[iOS REFRACTORED EXTRACTOR] Registering bundle assets...")
-              found_assets = ["baserom.us.z64", "discord_game_sdk.dll", "imgui.ini"]
-              
-              manifest_entry = {
-                  "extracted_assets": found_assets,
-                  "status": "ready_for_ios_bundle"
-              }
-              
-              with open("assets_manifest.yml", "w") as f:
-                  yaml.dump(manifest_entry, f)
-              print("[SUCCESS] Exported asset list to assets_manifest.yml.")
-
-          if __name__ == '__main__':
-              extract_assets_and_register_yml()
-          """
-                                  with open(target_refactored_name, "w", encoding="utf-8") as f:
-                                      f.write(refactored_content)
-                                  print(f"[REFACTORED & CREATED] Built '{target_refactored_name}'")
-                                  target_created = True
-
-                              if file_path != os.path.abspath(target_refactored_name) and os.path.exists(file_path):
-                                  os.remove(file_path)
-                                  print(f"[DEDUP DELETED] Removed redundant script: {file_path}")
+                      if file.endswith(".py") and file not in ignored_scripts and file != target_refactored_name:
+                          os.remove(os.path.join(root, file))
 
           if __name__ == '__main__':
               analyze_and_refactor()
           EOF
           python3 refactor_python_scripts.py
-          if [ -f "extract_assets_send_to_ymlfile.py" ]; then
-            python3 extract_assets_send_to_ymlfile.py
-          fi
+          python3 extract_assets_send_to_ymlfile.py
 
       - name: Step 4 - Create Info.plist Script
         shell: bash
         run: |
           cat << 'EOF' > create_plist.py
           import plistlib
-
           def generate_info_plist():
               plist_data = {
                   "CFBundleDevelopmentRegion": "en",
@@ -276,23 +206,17 @@ jobs:
                   "CFBundleVersion": "1",
                   "LSRequiresIPhoneOS": True,
                   "UILaunchStoryboardName": "LaunchScreen",
-                  "UISupportedInterfaceOrientations": [
-                      "UIInterfaceOrientationLandscapeLeft",
-                      "UIInterfaceOrientationLandscapeRight"
-                  ],
+                  "UISupportedInterfaceOrientations": ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
                   "UIDeviceFamily": [1, 2]
               }
-              
               with open("Info.plist", "wb") as f:
                   plistlib.dump(plist_data, f)
-              print("[PLIST] Created Info.plist metadata.")
-
           if __name__ == "__main__":
               generate_info_plist()
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Full Include Paths & Clean Resources)
+      - name: Step 5 - Create Xcode Spec Generator (Force CFLAGS Include Fix)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -309,7 +233,6 @@ jobs:
                       continue
                   for file in files:
                       ext = os.path.splitext(file)[1].lower()
-                      
                       if ext == '.swift':
                           continue
                       
@@ -317,25 +240,15 @@ jobs:
                       
                       if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
                           sources.append(rel_path)
-                      # Restrict bundle resources to actual game data assets, avoiding script clutter
-                      elif ext in ('.ini', '.json', '.z64', '.dll', '.png', '.jpg', '.wav', '.mp3'):
-                          if file in registered_resource_names:
-                              continue
-                          registered_resource_names.add(file)
-                          resources.append(rel_path)
+                      # Strictly exclude .py, .sh from being packed into the iOS application bundle
+                      elif ext in ('.ini', '.json', '.z64', '.png', '.jpg', '.wav', '.mp3'):
+                          if file not in registered_resource_names:
+                              registered_resource_names.add(file)
+                              resources.append(rel_path)
 
               return sources, resources
 
           def write_xcodegen_config(sources, resources):
-              # Include both include/ and src/ search trees without host Homebrew path leaks
-              header_search_paths = [
-                  "$(inherited)",
-                  "$(SRCROOT)",
-                  "$(SRCROOT)/include",
-                  "$(SRCROOT)/src",
-                  "$(SRCROOT)/src/saturn"
-              ]
-
               source_entries = [{"path": src, "optional": True} for src in sources]
               resource_entries = [{"path": res, "optional": True} for res in resources]
 
@@ -359,12 +272,13 @@ jobs:
                               "CODE_SIGN_IDENTITY": "",
                               "CODE_SIGNING_REQUIRED": "NO",
                               "PRODUCT_NAME": "saturn",
-                              "HEADER_SEARCH_PATHS": header_search_paths,
-                              "USER_HEADER_SEARCH_PATHS": ["\((SRCROOT)", "\)(SRCROOT)/include", "$(SRCROOT)/src"],
                               "ALWAYS_SEARCH_USER_PATHS": "NO",
                               "CLANG_ENABLE_MODULES": "YES",
                               "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
-                              "CLANG_CXX_LIBRARY": "libc++"
+                              "CLANG_CXX_LIBRARY": "libc++",
+                              "HEADER_SEARCH_PATHS": ["\((inherited)", "\)(SRCROOT)/include", "\((SRCROOT)/src", "\)(SRCROOT)"],
+                              "OTHER_CFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)"],
+                              "OTHER_CPLUSPLUSFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)"]
                           }
                       }
                   }
@@ -372,11 +286,9 @@ jobs:
 
               with open("project.yml", "w") as f:
                   yaml.dump(project_spec, f, default_flow_style=False)
-              print(f"[XCODEGEN] Generated project.yml with {len(sources)} sources and {len(resources)} bundle resources.")
 
           if __name__ == '__main__':
-              workspace = os.getcwd()
-              sources, resources = scan_repository(workspace)
+              sources, resources = scan_repository(os.getcwd())
               write_xcodegen_config(sources, resources)
           EOF
           python3 generate_xcodegen_spec.py
@@ -399,7 +311,6 @@ jobs:
           def run_and_log(cmd):
               print(f"[RUNNING COMMAND] {cmd}")
               process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-              
               cwd = os.getcwd()
 
               for line in process.stdout:
@@ -407,17 +318,10 @@ jobs:
                   
                   if "CompileC" in clean_line:
                       matches = re.findall(r'(\S+\.(?:c|cpp|m|mm|cc|cxx))', clean_line)
-                      source_file = None
-                      for m in matches:
-                          if not m.endswith('.o') and 'DerivedData' not in m and 'Intermediates' not in m:
-                              source_file = m
-                              break
-                      
+                      source_file = next((m for m in matches if not m.endswith('.o') and 'DerivedData' not in m), None)
                       if source_file:
-                          rel_path = os.path.relpath(source_file, cwd) if os.path.isabs(source_file) and source_file.startswith(cwd) else source_file
+                          rel_path = os.path.relpath(source_file, cwd) if os.path.isabs(source_file) else source_file
                           print(f"[COMPILING SOURCE] {rel_path}")
-                      else:
-                          print("[COMPILING SOURCE] Source File")
 
                   elif "CpResource" in clean_line:
                       matches = re.findall(r'(\S+\.(?:ini|json|z64|dll|png|jpg|wav|mp3))', clean_line)
@@ -437,24 +341,14 @@ jobs:
               return process.returncode
 
           def build():
-              print("--- Step 7.1: Generating Xcode Workspace via XcodeGen ---")
               if run_and_log("xcodegen generate") != 0:
-                  print("[ERROR] XcodeGen failed.")
                   sys.exit(1)
 
-              print("--- Step 7.2: Compiling saturn iOS Target ---")
               build_cmd = (
-                  "xcodebuild -project saturn.xcodeproj "
-                  "-scheme saturn "
-                  "-configuration Release "
-                  "-sdk iphoneos "
-                  "ARCHS=arm64 "
-                  "ONLY_ACTIVE_ARCH=NO "
-                  "CODE_SIGNING_ALLOWED=NO "
-                  "CODE_SIGN_IDENTITY='' "
-                  "CODE_SIGNING_REQUIRED=NO "
-                  "CONFIGURATION_BUILD_DIR=build/Release-iphoneos "
-                  "clean build"
+                  "xcodebuild -project saturn.xcodeproj -scheme saturn -configuration Release "
+                  "-sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO "
+                  "CODE_SIGN_IDENTITY='' CODE_SIGNING_REQUIRED=NO "
+                  "CONFIGURATION_BUILD_DIR=build/Release-iphoneos clean build"
               )
               
               if run_and_log(build_cmd) != 0:
@@ -481,66 +375,42 @@ jobs:
               app_path = "build/Release-iphoneos/saturn.app"
               if not os.path.exists(app_path):
                   for root, dirs, files in os.walk("."):
-                      for d in dirs:
-                          if d == "saturn.app":
-                              app_path = os.path.join(root, d)
-                              break
-
-              if not os.path.exists(app_path):
-                  print(f"[ERROR] Could not locate saturn.app bundle at {app_path}")
-                  sys.exit(1)
+                      if "saturn.app" in dirs:
+                          app_path = os.path.join(root, "saturn.app")
+                          break
 
               payload_dir = "Payload"
-              if os.path.exists(payload_dir):
-                  shutil.rmtree(payload_dir)
-              
+              if os.path.exists(payload_dir): shutil.rmtree(payload_dir)
               os.makedirs(payload_dir)
               dest_app = os.path.join(payload_dir, "saturn.app")
               shutil.copytree(app_path, dest_app)
 
               for resource in ["imgui.ini", "baserom.us.z64", "discord_game_sdk.dll"]:
-                  if os.path.exists(resource):
-                      dest_res = os.path.join(dest_app, resource)
-                      if not os.path.exists(dest_res):
-                          shutil.copy(resource, dest_res)
-                          print(f"[BUNDLED RESOURCE] Injected {resource} into saturn.app")
+                  if os.path.exists(resource) and not os.path.exists(os.path.join(dest_app, resource)):
+                      shutil.copy(resource, os.path.join(dest_app, resource))
 
               ipa_name = "saturn.ipa"
-              if os.path.exists(ipa_name):
-                  os.remove(ipa_name)
-
-              print("--- Packaging Target IPA Bundle (~30MB) ---")
               with zipfile.ZipFile(ipa_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   for root, dirs, files in os.walk(payload_dir):
                       for file in files:
                           full_path = os.path.join(root, file)
-                          arcname = os.path.relpath(full_path, start=".")
-                          zipf.write(full_path, arcname)
+                          zipf.write(full_path, os.path.relpath(full_path, start="."))
 
-              file_size_mb = os.path.getsize(ipa_name) / (1024 * 1024)
-              print(f"[ARTIFACT 1 READY] {ipa_name} ({file_size_mb:.2f} MB)")
+              print(f"[ARTIFACT 1 READY] {ipa_name} ({os.path.getsize(ipa_name) / (1024 * 1024):.2f} MB)")
 
           def create_xcode_source_zip():
               zip_name = "saturn-xcode-source.zip"
-              if os.path.exists(zip_name):
-                  os.remove(zip_name)
-
               allowed_exts = ('.c', '.cpp', '.h', '.hpp', '.m', '.mm', '.py', '.sh', '.json', '.dll', '.z64', '.ini', '.yml', '.plist', '.xcodeproj', '.xcworkspace')
               
-              print("--- Packaging Xcode Source Archive (~20MB) ---")
               with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   for root, dirs, files in os.walk("."):
-                      if 'build' in root or '.git' in root or 'DerivedData' in root or 'Payload' in root:
-                          continue
+                      if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload']): continue
                       for file in files:
-                          ext = os.path.splitext(file)[1].lower()
-                          if ext in allowed_exts or file in ["project.yml", "Info.plist", "imgui.ini"]:
+                          if os.path.splitext(file)[1].lower() in allowed_exts or file in ["project.yml", "Info.plist", "imgui.ini"]:
                               full_path = os.path.join(root, file)
-                              arcname = os.path.relpath(full_path, start=".")
-                              zipf.write(full_path, arcname)
+                              zipf.write(full_path, os.path.relpath(full_path, start="."))
 
-              file_size_mb = os.path.getsize(zip_name) / (1024 * 1024)
-              print(f"[ARTIFACT 2 READY] {zip_name} ({file_size_mb:.2f} MB)")
+              print(f"[ARTIFACT 2 READY] {zip_name} ({os.path.getsize(zip_name) / (1024 * 1024):.2f} MB)")
 
           if __name__ == "__main__":
               create_ipa()
