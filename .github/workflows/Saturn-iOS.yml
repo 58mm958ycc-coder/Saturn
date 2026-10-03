@@ -1,4 +1,4 @@
-name: iOS Multi-Script Xcode Build Pipeline
+name: iOS Intelligent Auto-Fix Pipeline
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   validate-and-build:
-    name: Validate, Auto-Patch, and Build iOS App
+    name: Auto-Patch, Validate, and Build iOS App
     runs-on: macos-latest
 
     steps:
@@ -31,19 +31,15 @@ jobs:
         run: |
           brew install make pkg-config coreutils xcodegen zip python-tk
 
-      - name: Step 1 - Execute Auto-Patcher & Dependency Downloader
+      - name: Step 1 - Execute Smart Validator & Auto-Patcher
         shell: bash
-        run: python3 change_scripts.py
+        run: python3 smart_validator.py
 
-      - name: Step 2 - Execute Pre-Build File Scanner & Validator
-        shell: bash
-        run: python3 pre_build_validator.py
-
-      - name: Step 3 - Execute Environment Setup & Xcode Builder
+      - name: Step 2 - Execute Environment Setup & Xcode Builder
         shell: bash
         run: python3 fix_and_build.py
 
-      - name: Step 4 - Package Output Artifacts
+      - name: Step 3 - Package Output Artifacts
         shell: bash
         run: |
           python3 -c "
