@@ -2,7 +2,7 @@ name: Auto-Compile iOS App
 
 on:
   push:
-    branches: [ main, legacy ]
+    branches: [ main, master, legacy ]
   workflow_dispatch:
 
 jobs:
