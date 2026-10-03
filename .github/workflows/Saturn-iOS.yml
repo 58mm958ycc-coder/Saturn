@@ -20,45 +20,54 @@ jobs:
       - name: Dynamically Generate Unified Xcode Project Mapping Blueprint        
         run: |          
           echo "=================================================="          
-          echo "  LINKING ALL IMGUI PANELS INTO XCODE PROJECT      "          
-          echo "=================================================="                    
+          echo "  CREATING XCODE PROJECT VIA XCODEGEN            "          
+          echo "=================================================="          
           
-          cat << 'EOF' > project.yml          
-          name: SaturnApp          
-          options:            
-            bundleIdPrefix: com.zezo            
-            xcodeVersion: "15.0"          
-          targets:            
-            SaturnApp:              
-              type: application              
-              platform: iOS              
-              deploymentTarget: "14.0"              
-              sources:                
+          # Safely create source targets so XcodeGen never crashes on missing folders
+          mkdir -p src levels actors include
+          
+          cat << 'EOF' > project.yml
+          name: SaturnApp
+          options:
+            bundleIdPrefix: com.zezo
+            xcodeVersion: "15.0"
+          targets:
+            SaturnApp:
+              type: application
+              platform: iOS
+              deploymentTarget: "14.0"
+              sources:
                 - path: src
                 - path: levels
                 - path: actors
-              settings:                
+              settings:
                 OTHER_CFLAGS: ["-DTARGET_APPLE=1", "-DION_MOBILE=1", "-DSATURN_LAUNCH_ALL_GUIS=1", "-DSHOW_DIAGNOSTICS_DASHBOARD=1", "-w"]
-                HEADER_SEARCH_PATHS: [                  
-                  "$(SRCROOT)/src",                  
-                  "$(SRCROOT)/src/saturn",                  
-                  "$(SRCROOT)/src/saturn/imgui",                  
+                HEADER_SEARCH_PATHS: [
+                  "$(SRCROOT)/src",
+                  "$(SRCROOT)/src/saturn",
+                  "$(SRCROOT)/src/saturn/imgui",
                   "$(SRCROOT)/src/saturn/libs/imgui",
                   "$(SRCROOT)/include"
-                ]                
-                GCC_C_LANGUAGE_STANDARD: gnu11                
+                ]
+                GCC_C_LANGUAGE_STANDARD: gnu11
                 CLANG_CXX_LANGUAGE_STANDARD: c++17
                 ENABLE_BITCODE: NO
-          EOF                    
+          EOF
+
+          # Run XcodeGen and verify project file creation
+          xcodegen generate
           
-          xcodegen generate          
-          echo "[✔] Genuine SaturnApp.xcodeproj folder structure generated successfully!"      
+          if [ ! -d "SaturnApp.xcodeproj" ]; then
+            echo "[!] ERROR: XcodeGen failed to generate SaturnApp.xcodeproj"
+            exit 1
+          fi
+          echo "[✔] SaturnApp.xcodeproj generated successfully!"
 
       - name: Compile Full Project Source Tree into Live iOS Executable        
         run: |          
           echo "=================================================="          
           echo "   COMPILING SATURN ENGINE INTO NATIVE ARM64 BINARY"          
-          echo "=================================================="                    
+          echo "=================================================="          
           
           xcodebuild -project SaturnApp.xcodeproj \
                      -scheme SaturnApp \
@@ -80,11 +89,9 @@ jobs:
           echo "   PACKAGING REAL ENGINE INTO RE-SIGNABLE iOS .IPA"          
           echo "=================================================="          
 
-          # 1. Prepare Payload Directory Structure
           rm -rf Payload MyApplication.ipa
           mkdir -p Payload/MyApplication.app
           
-          # 2. Copy Executable and Assets using standard bash
           cp -R build_output/MyApplication.app/* Payload/MyApplication.app/
           
           if [ -d "dynos" ]; then
@@ -94,13 +101,11 @@ jobs:
               cp -R res Payload/MyApplication.app/res
           fi
           
-          # 3. Rename binary and ensure it is executable
           if [ -f "Payload/MyApplication.app/SaturnApp" ]; then
               mv Payload/MyApplication.app/SaturnApp Payload/MyApplication.app/MyApplication
           fi
           chmod +x Payload/MyApplication.app/MyApplication
           
-          # 4. Generate the Info.plist directly into the app bundle safely
           cat << 'PLIST_EOF' > Payload/MyApplication.app/Info.plist
           
           
@@ -133,7 +138,6 @@ jobs:
           
           PLIST_EOF
           
-          # 5. Create a dedicated, clean Python script purely for zipping
           cat << 'PY_EOF' > zip_ipa.py
           import os
           import zipfile
@@ -149,7 +153,6 @@ jobs:
           print("[✔] SUCCESS // SATURN ENGINE IPA FULLY BUNDLED.")
           PY_EOF
           
-          # 6. Execute the independent Python script
           python3 zip_ipa.py
 
       - name: Upload Complete Sideloadable Application Bundle        
