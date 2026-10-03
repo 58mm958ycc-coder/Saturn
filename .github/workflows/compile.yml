@@ -77,7 +77,6 @@ jobs:
             echo "# Auto-generated level rules" > levels/level_rules.mk
           fi
 
-          # Unconditionally generate safe ultratypes.h stub (no cp commands)
           cat << 'EOF' > include/PR/ultratypes.h
           #ifndef ULTRATYPES_H
           #define ULTRATYPES_H
@@ -96,7 +95,6 @@ jobs:
           #endif
           EOF
 
-          # Unconditionally generate extended SDL.h stub (no cp commands)
           cat << 'EOF' > include/SDL2/SDL.h
           #ifndef SDL_H
           #define SDL_H
@@ -212,7 +210,7 @@ jobs:
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Inject NON_MATCHING Macro)
+      - name: Step 5 - Create Xcode Spec Generator (Fixed Include Paths)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -271,9 +269,9 @@ jobs:
                               "CLANG_ENABLE_MODULES": "YES",
                               "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
                               "CLANG_CXX_LIBRARY": "libc++",
-                              "HEADER_SEARCH_PATHS": ["\((inherited)", "\)(SRCROOT)/include", "\((SRCROOT)/src", "\)(SRCROOT)"],
-                              "OTHER_CFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)", "-DNON_MATCHING=1"],
-                              "OTHER_CPLUSPLUSFLAGS": ["-I\((SRCROOT)/include", "-I\)(SRCROOT)/src", "-I$(SRCROOT)", "-DNON_MATCHING=1"]
+                              "HEADER_SEARCH_PATHS": [r"$(inherited)", "include", "src", "."],
+                              "OTHER_CFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1"],
+                              "OTHER_CPLUSPLUSFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1"]
                           }
                       }
                   }
