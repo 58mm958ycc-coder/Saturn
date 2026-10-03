@@ -77,8 +77,8 @@ jobs:
             echo "# Auto-generated level rules" > levels/level_rules.mk
           fi
 
-          # Write ultratypes.h cleanly via printf to avoid heredoc/CRLF issues
-          printf "#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\ntypedef unsigned char u8;\ntypedef unsigned short u16;\ntypedef unsigned int u32;\ntypedef unsigned long long u64;\ntypedef signed char s8;\ntypedef short s16;\ntypedef int s32;\ntypedef long long s64;\ntypedef float f32;\ntypedef double f64;\n#endif\n" > include/PR/ultratypes.h
+          # Write ultratypes.h with forced NON_MATCHING definition
+          printf "#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\n#define NON_MATCHING 1\ntypedef unsigned char u8;\ntypedef unsigned short u16;\ntypedef unsigned int u32;\ntypedef unsigned long long u64;\ntypedef signed char s8;\ntypedef short s16;\ntypedef int s32;\ntypedef long long s64;\ntypedef float f32;\ntypedef double f64;\n#endif\n" > include/PR/ultratypes.h
 
           # Write SDL.h cleanly via printf
           printf "#ifndef SDL_H\n#define SDL_H\ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef struct SDL_Window SDL_Window;\ntypedef void* SDL_GLContext;\ntypedef union SDL_Event { unsigned int type; } SDL_Event;\ntypedef int SDL_Scancode;\n#endif\n" > include/SDL2/SDL.h
@@ -177,7 +177,7 @@ jobs:
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Global NON_MATCHING Macro)
+      - name: Step 5 - Create Xcode Spec Generator (Force-Include Macro Header)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -220,8 +220,8 @@ jobs:
                   "settings": {
                       "GCC_PREPROCESSOR_DEFINITIONS": ["NON_MATCHING=1", "$(inherited)"],
                       "HEADER_SEARCH_PATHS": [r"$(inherited)", "include", "src", "."],
-                      "OTHER_CFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1"],
-                      "OTHER_CPLUSPLUSFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1"]
+                      "OTHER_CFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1", "-include", "include/PR/ultratypes.h"],
+                      "OTHER_CPLUSPLUSFLAGS": ["-Iinclude", "-Isrc", "-I.", "-DNON_MATCHING=1", "-include", "include/PR/ultratypes.h"]
                   },
                   "targets": {
                       "saturn": {
