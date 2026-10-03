@@ -36,7 +36,7 @@ jobs:
       - name: Dynamically Generate Unified Xcode Project Mapping Blueprint        
         run: |          
           echo "=================================================="          
-          echo "  SCANNING ALL SOURCE & HEADER FILES ACROSS REPO "          
+          echo "  GENERATING XCODE PROJECT FOR C/C++ SOURCE TREE  "          
           echo "=================================================="          
           
           cat << 'EOF' > project.yml
@@ -50,29 +50,22 @@ jobs:
               platform: iOS
               deploymentTarget: "14.0"
               sources:
-                - path: .
-                  includes:
-                    - "**/*.c"
-                    - "**/*.cpp"
-                    - "**/*.cc"
-                    - "**/*.cxx"
-                    - "**/*.h"
-                    - "**/*.hpp"
-                    - "**/*.inl"
-                    - "**/*.mm"
-                    - "**/*.m"
-                    - "**/*.s"
-                    - "**/*.S"
-                  excludes:
-                    - "build/**"
-                    - "build_output/**"
-                    - "Payload/**"
-                    - ".github/**"
+                - path: src
+                  includes: ["**/*.c", "**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.h", "**/*.hpp", "**/*.inl", "**/*.mm", "**/*.m"]
+                - path: levels
+                  includes: ["**/*.c", "**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.h", "**/*.hpp", "**/*.inl"]
+                - path: actors
+                  includes: ["**/*.c", "**/*.cpp", "**/*.cc", "**/*.cxx", "**/*.h", "**/*.hpp", "**/*.inl"]
+                - path: include
+                  includes: ["**/*.h", "**/*.hpp"]
               settings:
                 OTHER_CFLAGS: ["-DTARGET_APPLE=1", "-DION_MOBILE=1", "-DSATURN_LAUNCH_ALL_GUIS=1", "-DSHOW_DIAGNOSTICS_DASHBOARD=1", "-w"]
                 HEADER_SEARCH_PATHS: [
-                  "$(SRCROOT)",
-                  "$(SRCROOT)/**"
+                  "$(SRCROOT)/src",
+                  "$(SRCROOT)/src/saturn",
+                  "$(SRCROOT)/src/saturn/imgui",
+                  "$(SRCROOT)/src/saturn/libs/imgui",
+                  "$(SRCROOT)/include"
                 ]
                 GCC_C_LANGUAGE_STANDARD: gnu11
                 CLANG_CXX_LANGUAGE_STANDARD: c++17
@@ -85,7 +78,7 @@ jobs:
             echo "[!] ERROR: XcodeGen failed to generate SaturnApp.xcodeproj"
             exit 1
           fi
-          echo "[✔] SaturnApp.xcodeproj generated successfully with ALL source/header files included!"
+          echo "[✔] SaturnApp.xcodeproj generated successfully!"
 
       - name: Compile Full Project Source Tree into Live iOS Executable        
         run: |          
@@ -118,7 +111,6 @@ jobs:
           
           cp -R build_output/MyApplication.app/* Payload/MyApplication.app/
           
-          # Copy all non-code game assets directly into the application container
           if [ -d "dynos" ]; then
               cp -R dynos Payload/MyApplication.app/dynos
           fi
