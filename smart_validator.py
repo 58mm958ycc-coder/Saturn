@@ -6,63 +6,66 @@ import urllib.request
 import json
 import time
 
-# Using one of the provided keys for the fallback AI dynamic patcher
+# AI Fallback Key
 AI_API_KEY = "sk-abcdef1234567890abcdef1234567890abcdef12"
 
-def ai_fallback_fix(file_path, content, error_reason):
-    """Fallback method: Uses the provided API key to ask an AI to fix unknown errors."""
-    print(f"[AI-FIX] Attempting dynamic AI fix for {file_path} using API key...")
+def download_missing_file(missing_include):
+    """Attempts to download missing standard SM64/Saturn headers from the web."""
+    # Common SM64 file paths mapping
+    base_url = "https://raw.githubusercontent.com/n64decomp/sm64/main/"
     
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {AI_API_KEY}"
-    }
+    # Try to construct the likely path
+    if missing_include.startswith("game/"):
+        target_path = f"src/{missing_include}"
+    else:
+        target_path = f"include/{missing_include}"
+        
+    url = base_url + target_path
     
-    prompt = f"Fix the following C/C++ file. It has this error: {error_reason}. Return ONLY the raw fixed C/C++ code, nothing else, no markdown formatting.\n\n{content}"
+    # Strip the directory structure to save it in the current directory or include/
+    save_dir = "include/game" if missing_include.startswith("game/") else "include"
+    os.makedirs(save_dir, exist_ok=True)
     
-    data = {
-        "model": "gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2
-    }
+    save_path = os.path.join(save_dir, os.path.basename(missing_include))
     
     try:
-        req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            fixed_code = result["choices"][0]["message"]["content"].strip()
-            
-            # Clean up potential markdown formatting from the AI response
-            if fixed_code.startswith("```"):
-                fixed_code = "\n".join(fixed_code.split("\n")[1:-1])
-                
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(fixed_code)
-            print(f"[AI-FIX] Successfully patched {file_path}")
-            return True
+        print(f"[DOWNLOADER] Attempting to fetch missing file '{missing_include}' from {url}...")
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            content = response.read()
+            with open(save_path, "wb") as f:
+                f.write(content)
+        print(f"[DOWNLOADER] Success! Saved to {save_path}")
+        return True
     except Exception as e:
-        print(f"[AI-FIX] AI fix failed or timed out: {e}")
+        print(f"[DOWNLOADER] Failed to fetch {missing_include}: {e}")
         return False
 
 def check_for_missing_local_files(full_text, current_dir, repo_root):
-    """Scans for #include "file.h". If 'file.h' doesn't exist anywhere, trigger a hard stop."""
+    """Scans for #include "file.h" and verifies it exists in the repo."""
     local_includes = re.findall(r'#include\s+"([^"]+)"', full_text)
     for inc in local_includes:
-        # Ignore system-like includes wrapped in quotes by mistake
         if inc.startswith("SDL") or inc.startswith("PR/"):
             continue
             
-        # Check if the file exists relative to the current file or anywhere in the repo
+        # Extract just the filename (e.g., 'ingame_menu.h' from 'game/ingame_menu.h')
+        base_name = os.path.basename(inc)
+        
+        # Check if it exists relative to the current file
         local_path = os.path.join(current_dir, inc)
         if not os.path.exists(local_path):
             found_anywhere = False
+            # Search the entire repo for the base filename
             for root, _, files in os.walk(repo_root):
-                if inc in files:
+                if base_name in files:
                     found_anywhere = True
                     break
+            
+            # If it's truly not in the repo, try downloading it!
             if not found_anywhere:
-                return inc
+                if download_missing_file(inc):
+                    return None # Download succeeded, no longer missing
+                return inc # Still missing, trigger error
     return None
 
 def run_smart_scan():
@@ -89,11 +92,11 @@ def run_smart_scan():
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
 
-                # 1. FATAL CHECK: Missing local files
+                # 1. FATAL CHECK: Missing local files with Auto-Download Fallback
                 missing_file = check_for_missing_local_files(content, root, repo_root)
                 if missing_file:
-                    print(f"\n[FATAL ERROR] File {rel_path} requires '{missing_file}', but it does not exist in the repository.")
-                    print("Stopping execution. Missing core files cannot be auto-generated.")
+                    print(f"\n[FATAL ERROR] File {rel_path} requires '{missing_file}', and it could not be found or downloaded.")
+                    print("Stopping execution.")
                     sys.exit(1)
 
                 # 2. INSTANT FIX: Missing Standard Headers
