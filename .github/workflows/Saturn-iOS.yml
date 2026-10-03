@@ -23,7 +23,6 @@ jobs:
           echo "  CREATING XCODE PROJECT VIA XCODEGEN            "          
           echo "=================================================="          
           
-          # Safely create source targets so XcodeGen never crashes on missing folders
           mkdir -p src levels actors include
           
           cat << 'EOF' > project.yml
@@ -31,6 +30,7 @@ jobs:
           options:
             bundleIdPrefix: com.zezo
             xcodeVersion: "15.0"
+            objectVersion: 56
           targets:
             SaturnApp:
               type: application
@@ -54,14 +54,13 @@ jobs:
                 ENABLE_BITCODE: NO
           EOF
 
-          # Run XcodeGen and verify project file creation
           xcodegen generate
           
           if [ ! -d "SaturnApp.xcodeproj" ]; then
             echo "[!] ERROR: XcodeGen failed to generate SaturnApp.xcodeproj"
             exit 1
           fi
-          echo "[✔] SaturnApp.xcodeproj generated successfully!"
+          echo "[✔] SaturnApp.xcodeproj generated successfully with Xcode 15 format!"
 
       - name: Compile Full Project Source Tree into Live iOS Executable        
         run: |          
