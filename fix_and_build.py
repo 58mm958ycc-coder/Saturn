@@ -14,7 +14,7 @@ def self_install_deps():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
 
 def clean_and_validate_sources():
-    print("[VALIDATOR] Scanning source tree for all .cpp, .c, and .h files...")
+    print("[VALIDATOR] Scanning entire repository for .cpp, .c, .h, and .m files...")
     repo_root = os.getcwd()
     platform_exclusions = ['dxsdk', 'direct3d', 'd3d11', 'd3d12', 'wgl', 'glx', 'wasapi', 'alsa', 'wiiu']
     
@@ -25,7 +25,7 @@ def clean_and_validate_sources():
         if any(x in root.lower() for x in ['build', '.git', 'deriveddata', 'payload', 'external_deps'] + platform_exclusions):
             continue
         for file in files:
-            if file.endswith(('.cpp', '.c', '.h', '.hpp')):
+            if file.endswith(('.cpp', '.c', '.h', '.hpp', '.m', '.mm')):
                 scanned += 1
                 file_path = os.path.join(root, file)
                 try:
@@ -38,6 +38,7 @@ def clean_and_validate_sources():
                 changed = False
                 for line in lines:
                     stripped = line.strip()
+                    # Strip out empty/malformed include statements
                     if stripped.startswith('#include') and len(stripped.split()) < 2:
                         changed = True
                         continue
@@ -56,7 +57,7 @@ def clean_and_validate_sources():
                         f.write(final_content)
                     fixed += 1
                     
-    print(f"[VALIDATOR] Scanned {scanned} files. Cleaned/fixed {fixed} files.")
+    print(f"[VALIDATOR] Scanned {scanned} scriptable files. Cleaned/fixed {fixed} files.")
 
 def setup_headers_and_mocks():
     print("[SETUP] Injecting standard headers and mock environment...")
@@ -90,8 +91,9 @@ def setup_headers_and_mocks():
 
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating project.yml and compiling via Xcode...")
+    print("[XCODEGEN] Generating project.yml covering all repository code directories...")
     
+    # Include all code-bearing folders visible in your repository structure
     sources = [
         {
             "path": "src",
@@ -106,6 +108,8 @@ def build_xcodegen_and_run():
                 "pc/audio/audio_alsa.c"
             ]
         },
+        {"path": "actors"},
+        {"path": "levels"},
         {"path": "include"},
         {"path": "lib"}
     ]
@@ -127,6 +131,8 @@ def build_xcodegen_and_run():
                 "$(inherited)",
                 "include",
                 "src",
+                "actors",
+                "levels",
                 ".",
                 "/opt/homebrew/include",
                 "/opt/homebrew/include/SDL2"
@@ -160,6 +166,7 @@ def build_xcodegen_and_run():
 
     subprocess.check_call(["xcodegen", "generate"])
 
+    print("[XCODEBUILD] Building iOS target with full file tree...")
     cmd = [
         "xcodebuild",
         "-project", "saturn.xcodeproj",
@@ -192,7 +199,7 @@ def build_xcodegen_and_run():
             shutil.rmtree(app_dynos_path)
         shutil.copytree("dynos", app_dynos_path)
 
-    print("[PACKAGER] Creating final .ipa package...")
+    print("[PACKAGER] Packaging final .ipa file...")
     payload_dir = "Payload"
     if os.path.exists(payload_dir):
         shutil.rmtree(payload_dir)
@@ -207,7 +214,7 @@ def build_xcodegen_and_run():
                 rel_path = os.path.relpath(abs_path, payload_dir)
                 ipa.write(abs_path, os.path.join("Payload", rel_path))
                 
-    print("[SUCCESS] saturn.ipa generated successfully!")
+    print("[SUCCESS] saturn.ipa generated and ready!")
 
 if __name__ == "__main__":
     self_install_deps()
