@@ -14,37 +14,12 @@ def install_deps():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
 
 def restore_clean_repo():
-    print("[CLEANUP] Resetting git workspace to clean state...")
+    print("[CLEANUP] Resetting git workspace...")
     try:
         subprocess.run(["git", "reset", "--hard", "HEAD"], check=True)
         subprocess.run(["git", "clean", "-fd"], check=True)
     except Exception as e:
         print(f"[WARNING] Git reset error: {e}")
-
-def sanitize_broken_includes():
-    print("[SCANNER] Purging broken/empty include lines across all source files...")
-    repo_root = os.getcwd()
-    cleaned = 0
-    for root, _, files in os.walk(repo_root):
-        if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload']):
-            continue
-        for file in files:
-            if file.endswith(('.c', '.cpp', '.h', '.hpp', '.m', '.mm')):
-                file_path = os.path.join(root, file)
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                    
-                    # Fix empty includes like "#include \n" or "#include \r\n"
-                    new_content = re.sub(r'#include\s*(\r?\n|\Z)', '', content)
-                    
-                    if new_content != content:
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(new_content)
-                        cleaned += 1
-                except Exception:
-                    pass
-    print(f"[SCANNER] Cleaned {cleaned} source files.")
 
 def create_info_plist():
     print("[PLIST] Creating Info.plist...")
@@ -64,7 +39,7 @@ def create_info_plist():
         plistlib.dump(plist_data, f)
 
 def generate_mock_headers():
-    print("[MOCKS] Generating global mock headers with uncorrupted raw strings...")
+    print("[MOCKS] Generating minimal mock headers...")
     os.makedirs("include/PR", exist_ok=True)
     os.makedirs("include/SDL2", exist_ok=True)
 
@@ -209,7 +184,7 @@ def generate_project_spec(extra_excludes=None):
         {"path": "lib"}
     ]
 
-    c_flags = [
+    force_include_flags = [
         "-w",
         "-DNON_MATCHING=1",
         "-DVERSION_US=1",
@@ -217,20 +192,9 @@ def generate_project_spec(extra_excludes=None):
         "-DRAPI_GL=1",
         "-DWAPI_SDL2=1",
         "-DHAVE_SDL2=1",
-        "-include", "stddef.h",
-        "-include", "stdint.h",
-        "-include", "stdbool.h",
-        "-include", "string.h",
         "-include", "include/PR/ultratypes.h",
         "-include", "include/PR/gbi.h",
         "-include", "include/SDL2/SDL.h"
-    ]
-
-    cxx_flags = c_flags + [
-        "-include", "cmath",
-        "-include", "vector",
-        "-include", "string",
-        "-include", "algorithm"
     ]
 
     project_spec = {
@@ -265,8 +229,8 @@ def generate_project_spec(extra_excludes=None):
             ],
             "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
             "CLANG_CXX_LIBRARY": "libc++",
-            "OTHER_CFLAGS": c_flags,
-            "OTHER_CPLUSPLUSFLAGS": cxx_flags
+            "OTHER_CFLAGS": force_include_flags,
+            "OTHER_CPLUSPLUSFLAGS": force_include_flags
         },
         "targets": {
             "saturn": {
@@ -294,17 +258,17 @@ def continuous_smart_build_loop():
 
     while True:
         print(f"\n==================================================")
-        print(f"       BUILD & REPAIR LOOP: ITERATION {iteration}")
+        print(f"       FAST INCREMENTAL BUILD LOOP: ITERATION {iteration}")
         print(f"==================================================")
 
-        sanitize_broken_includes()
         generate_mock_headers()
         generate_project_spec(extra_excludes)
 
-        print("[XCODEGEN] Generating project spec...")
+        print("[XCODEGEN] Refreshing project spec...")
         subprocess.check_call(["xcodegen", "generate"])
 
-        print("[XCODEBUILD] Running Xcode build...")
+        # Note: 'clean' removed to allow fast incremental builds!
+        print("[XCODEBUILD] Running Xcode build (incremental)...")
         cmd = [
             "xcodebuild",
             "-project", "saturn.xcodeproj",
@@ -317,7 +281,6 @@ def continuous_smart_build_loop():
             "CODE_SIGN_IDENTITY=",
             "CODE_SIGNING_REQUIRED=NO",
             "CONFIGURATION_BUILD_DIR=build/Release-iphoneos",
-            "clean",
             "build"
         ]
 
@@ -341,7 +304,7 @@ def continuous_smart_build_loop():
 
         patched = False
 
-        # 1. Handle Resource Duplication
+        # Resource Collision auto-fix
         collisions = re.findall(r"Multiple commands produce '.*?/saturn\.app/(.*?)'", full_log)
         collisions += re.findall(r"duplicate output file '.*?/saturn\.app/(.*?)'", full_log)
         if collisions:
@@ -352,37 +315,28 @@ def continuous_smart_build_loop():
                     print(f"[AUTO-FIX] Excluded resource collision: {pattern}")
                     patched = True
 
-        # 2. Intercept and Repair File-Specific Compiler Errors
-        error_lines = re.findall(r"(/[^:\n]+\.(?:cpp|c|h|hpp)):(\d+):\d+: error: (.*)", full_log)
-        for filepath, line_num, err_msg in error_lines:
+        # Target file header fixes on error
+        error_files = re.findall(r"(/[^:\n]+\.(?:cpp|c|h|hpp)):(\d+):\d+: error:", full_log)
+        for filepath, line_num in set(error_files):
             if os.path.exists(filepath):
                 try:
                     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                         file_code = f.read()
 
-                    # Fix empty or broken includes in offending file
                     new_code = re.sub(r'#include\s*(\r?\n|\Z)', '', file_code)
-
-                    # Inject missing header if missing
-                    if "unknown type name" in err_msg or "use of undeclared identifier" in err_msg:
-                        if "#include " not in new_code:
-                            new_code = "#include \n#include \n" + new_code
-
                     if new_code != file_code:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.write(new_code)
-                        print(f"[AUTO-FIX] Repaired syntax/headers in {os.path.basename(filepath)}")
+                        print(f"[AUTO-FIX] Repaired syntax in {os.path.basename(filepath)}")
                         patched = True
                 except Exception:
                     pass
 
         iteration += 1
 
-        # Fallback safeguard if xcodebuild fails without new actionable patterns
-        if not patched and iteration > 10:
-            print("[AUTO-FIX] Injecting global catch-all exclusions to bypass stuck files...")
-            extra_excludes.append("**/*.yaml")
-            extra_excludes.append("**/*.png")
+        if not patched and iteration > 5:
+            print("[AUTO-FIX] Applying fallback exclusions...")
+            extra_excludes.extend(["**/*.yaml", "**/*.png"])
 
 def package_ipa():
     print("[POST-BUILD] Embedding DynOS asset packs...")
