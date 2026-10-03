@@ -37,7 +37,6 @@ jobs:
           echo "--- Syncing Git Submodules & Fetching External Source Repositories ---"
           git submodule update --init --recursive || true
           
-          # Fetch ImGui repository if native headers are missing
           if [ ! -d "src/imgui" ] || [ ! -f "src/imgui/imgui.h" ]; then
             echo "[GIT CLONE] Cloning Dear ImGui source into src/imgui..."
             mkdir -p src/imgui
@@ -134,7 +133,6 @@ jobs:
             echo "[SCAFFOLD] Created extract_assets.py"
           fi
 
-          # Binary placeholders for proper release bundle scaling
           dd if=/dev/urandom of=baserom.us.z64 bs=1M count=12 2>/dev/null || echo "ROM placeholder created"
           echo "Mock SDK DLL" > discord_game_sdk.dll
 
@@ -191,7 +189,6 @@ jobs:
                                   print(f"[REFACTORED & CREATED] Built '{target_refactored_name}'")
                                   target_created = True
 
-                              # Delete original/duplicate script instance to prevent Xcode resource collisions
                               if file_path != os.path.abspath(target_refactored_name) and os.path.exists(file_path):
                                   os.remove(file_path)
                                   print(f"[DEDUP DELETED] Removed redundant script: {file_path}")
@@ -238,7 +235,7 @@ jobs:
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Recursive Search Paths Fix)
+      - name: Step 5 - Create Xcode Spec Generator (Libc++ Header Resolution Fix)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -257,7 +254,6 @@ jobs:
                   for file in files:
                       ext = os.path.splitext(file)[1].lower()
                       
-                      # Bypass Swift files
                       if ext == '.swift':
                           continue
                       
@@ -266,9 +262,12 @@ jobs:
                       if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
                           sources.append(rel_path)
                           if ext in ('.h', '.hpp'):
-                              header_dirs.add(os.path.dirname(rel_path) or '.')
+                              dir_name = os.path.dirname(rel_path)
+                              if dir_name:
+                                  parts = dir_name.split(os.sep)
+                                  for i in range(1, len(parts) + 1):
+                                      header_dirs.add(os.path.join(*parts[:i]))
                       elif ext in ('.ini', '.json', '.z64', '.dll', '.py', '.sh'):
-                          # Deduplicate output names to prevent CpResource target collisions
                           if file in registered_resource_names:
                               continue
                           registered_resource_names.add(file)
@@ -277,18 +276,17 @@ jobs:
               return sources, resources, sorted(list(header_dirs))
 
           def write_xcodegen_config(sources, resources, header_dirs):
-              # Adding Recursive wildcards $(SRCROOT)/** to resolve saturn/ relative includes
-              header_paths = [
-                  "$(SRCROOT)",
-                  "$(SRCROOT)/src",
-                  "$(SRCROOT)/**",
+              user_header_paths = ["\((SRCROOT)", "\)(SRCROOT)/src"]
+              for hd in header_dirs:
+                  formatted = f"$(SRCROOT)/{hd}"
+                  if formatted not in user_header_paths:
+                      user_header_paths.append(formatted)
+
+              system_header_paths = [
+                  "$(inherited)",
                   "/opt/homebrew/include",
                   "/opt/homebrew/include/SDL2"
               ]
-              for hd in header_dirs:
-                  formatted = f"$(SRCROOT)/{hd}"
-                  if formatted not in header_paths:
-                      header_paths.append(formatted)
 
               source_entries = [{"path": src, "optional": True} for src in sources]
               resource_entries = [{"path": res, "optional": True} for res in resources]
@@ -313,10 +311,12 @@ jobs:
                               "CODE_SIGN_IDENTITY": "",
                               "CODE_SIGNING_REQUIRED": "NO",
                               "PRODUCT_NAME": "saturn",
-                              "HEADER_SEARCH_PATHS": header_paths,
-                              "USER_HEADER_SEARCH_PATHS": ["\((SRCROOT)", "\)(SRCROOT)/src", "$(SRCROOT)/**"],
-                              "ALWAYS_SEARCH_USER_PATHS": "YES",
-                              "LIBRARY_SEARCH_PATHS": ["/opt/homebrew/lib"]
+                              "HEADER_SEARCH_PATHS": system_header_paths + user_header_paths,
+                              "USER_HEADER_SEARCH_PATHS": user_header_paths,
+                              "ALWAYS_SEARCH_USER_PATHS": "NO",
+                              "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
+                              "CLANG_CXX_LIBRARY": "libc++",
+                              "LIBRARY_SEARCH_PATHS": ["$(inherited)", "/opt/homebrew/lib"]
                           }
                       }
                   }
@@ -324,7 +324,7 @@ jobs:
 
               with open("project.yml", "w") as f:
                   yaml.dump(project_spec, f, default_flow_style=False)
-              print(f"[XCODEGEN] Generated project.yml with recursive header paths for {len(sources)} source files.")
+              print(f"[XCODEGEN] Generated project.yml with preserved system header search order.")
 
           if __name__ == '__main__':
               workspace = os.getcwd()
@@ -358,7 +358,6 @@ jobs:
                   clean_line = line.strip()
                   
                   if "CompileC" in clean_line:
-                      # Extract the source file path ending in .c, .cpp, .m, or .mm
                       matches = re.findall(r'(\S+\.(?:c|cpp|m|mm|cc|cxx))', clean_line)
                       source_file = None
                       for m in matches:
@@ -370,7 +369,7 @@ jobs:
                           rel_path = os.path.relpath(source_file, cwd) if os.path.isabs(source_file) and source_file.startswith(cwd) else source_file
                           print(f"[COMPILING SOURCE] {rel_path}")
                       else:
-                          print("[COMPILING SOURCE] Core C/C++ Source File")
+                          print("[COMPILING SOURCE] Core Source File")
 
                   elif "CpResource" in clean_line:
                       matches = re.findall(r'(\S+\.(?:ini|json|z64|dll|py|sh|png|jpg|wav|mp3))', clean_line)
@@ -423,7 +422,7 @@ jobs:
           EOF
           python3 run_xcode_build.py
 
-      - name: Step 8 - Dual Artifact Packaging (~30MB IPA & ~20MB Source Zip)
+      - name: Step 8 - Multi-Artifact Packager (~30MB IPA & ~20MB Source Zip)
         shell: bash
         run: |
           cat << 'EOF' > package_artifacts.py
