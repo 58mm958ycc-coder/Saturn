@@ -74,13 +74,59 @@ jobs:
       - name: Step 2 - Scaffold ImGui, Missing Headers & Native Source Files
         shell: bash
         run: |
-          mkdir -p build/us_pc/src/engine build/us_ios levels src/engine src/imgui src/saturn
+          mkdir -p build/us_pc/src/engine build/us_ios levels src/engine src/imgui src/saturn include/PR include/SDL2
           
           if [ ! -f "levels/level_rules.mk" ]; then
             echo "# Auto-generated level rules" > levels/level_rules.mk
           fi
+
+          # Ensure PR/ultratypes.h stub exists
+          if [ ! -f "include/PR/ultratypes.h" ]; then
+            cat << 'EOF' > include/PR/ultratypes.h
+          #ifndef ULTRATYPES_H
+          #define ULTRATYPES_H
+
+          #include 
+          #include 
+
+          typedef uint8_t  u8;
+          typedef uint16_t u16;
+          typedef uint32_t u32;
+          typedef uint64_t u64;
+
+          typedef int8_t   s8;
+          typedef int16_t  s16;
+          typedef int32_t  s32;
+          typedef int64_t  s64;
+
+          typedef float    f32;
+          typedef double   f64;
+
+          #endif
+          EOF
+            echo "[SCAFFOLD] Created include/PR/ultratypes.h"
+          fi
+
+          # Ensure SDL2/SDL.h stub exists
+          if [ ! -f "include/SDL2/SDL.h" ]; then
+            cat << 'EOF' > include/SDL2/SDL.h
+          #ifndef SDL_H
+          #define SDL_H
+
+          #include 
+          #include 
+
+          typedef uint32_t Uint32;
+          typedef uint8_t  Uint8;
+          typedef uint16_t Uint16;
+          typedef int32_t  Sint32;
+
+          #endif
+          EOF
+            echo "[SCAFFOLD] Created include/SDL2/SDL.h"
+          fi
           
-          # Ensure saturn header stubs exist to prevent missing header errors
+          # Ensure saturn header stubs exist
           if [ ! -f "src/saturn/saturn_timelines.h" ]; then
             printf "#ifndef SATURN_TIMELINES_H\n#define SATURN_TIMELINES_H\n\n#include \n\n#endif\n" > src/saturn/saturn_timelines.h
             echo "[SCAFFOLD] Created src/saturn/saturn_timelines.h"
@@ -246,7 +292,7 @@ jobs:
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Spec Generator (Strict Clean System Headers Fix)
+      - name: Step 5 - Create Xcode Spec Generator (Full Include Paths & Clean Resources)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -271,7 +317,8 @@ jobs:
                       
                       if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
                           sources.append(rel_path)
-                      elif ext in ('.ini', '.json', '.z64', '.dll', '.py', '.sh'):
+                      # Restrict bundle resources to actual game data assets, avoiding script clutter
+                      elif ext in ('.ini', '.json', '.z64', '.dll', '.png', '.jpg', '.wav', '.mp3'):
                           if file in registered_resource_names:
                               continue
                           registered_resource_names.add(file)
@@ -280,11 +327,13 @@ jobs:
               return sources, resources
 
           def write_xcodegen_config(sources, resources):
-              # Strictly use iOS SDK standard header resolution without Homebrew overrides
+              # Include both include/ and src/ search trees without host Homebrew path leaks
               header_search_paths = [
                   "$(inherited)",
                   "$(SRCROOT)",
-                  "$(SRCROOT)/src"
+                  "$(SRCROOT)/include",
+                  "$(SRCROOT)/src",
+                  "$(SRCROOT)/src/saturn"
               ]
 
               source_entries = [{"path": src, "optional": True} for src in sources]
@@ -311,7 +360,7 @@ jobs:
                               "CODE_SIGNING_REQUIRED": "NO",
                               "PRODUCT_NAME": "saturn",
                               "HEADER_SEARCH_PATHS": header_search_paths,
-                              "USER_HEADER_SEARCH_PATHS": ["\((SRCROOT)", "\)(SRCROOT)/src"],
+                              "USER_HEADER_SEARCH_PATHS": ["\((SRCROOT)", "\)(SRCROOT)/include", "$(SRCROOT)/src"],
                               "ALWAYS_SEARCH_USER_PATHS": "NO",
                               "CLANG_ENABLE_MODULES": "YES",
                               "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
@@ -323,7 +372,7 @@ jobs:
 
               with open("project.yml", "w") as f:
                   yaml.dump(project_spec, f, default_flow_style=False)
-              print(f"[XCODEGEN] Generated clean iOS project.yml for {len(sources)} sources.")
+              print(f"[XCODEGEN] Generated project.yml with {len(sources)} sources and {len(resources)} bundle resources.")
 
           if __name__ == '__main__':
               workspace = os.getcwd()
@@ -371,11 +420,9 @@ jobs:
                           print("[COMPILING SOURCE] Source File")
 
                   elif "CpResource" in clean_line:
-                      matches = re.findall(r'(\S+\.(?:ini|json|z64|dll|py|sh|png|jpg|wav|mp3))', clean_line)
+                      matches = re.findall(r'(\S+\.(?:ini|json|z64|dll|png|jpg|wav|mp3))', clean_line)
                       if matches:
                           print(f"[PROCESSING RESOURCE] {os.path.basename(matches[0])}")
-                      else:
-                          print("[PROCESSING RESOURCE] Application Asset")
 
                   elif "CompileMetalFile" in clean_line:
                       print(f"[COMPILING SHADER] {os.path.basename(clean_line.split()[-1])}")
