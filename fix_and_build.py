@@ -15,34 +15,16 @@ def self_install_deps():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "--break-system-packages"])
 
 def fetch_external_assets_and_ipas():
-    print("[DOWNLOADER] Checking for missing external bundles and IPA resources...")
+    print("[DOWNLOADER] Checking for missing external bundles...")
     os.makedirs("external_deps", exist_ok=True)
-    
-    # Download extra asset archives or reference IPAs if required
-    downloads = {
-        "imgui_src.zip": "https://github.com/ocornut/imgui/archive/refs/heads/master.zip"
-    }
-
+    downloads = {"imgui_src.zip": "https://github.com/ocornut/imgui/archive/refs/heads/master.zip"}
     for target_file, url in downloads.items():
         destination = os.path.join("external_deps", target_file)
         if not os.path.exists(destination):
             try:
-                print(f"[DOWNLOAD] Fetching {url}...")
                 urllib.request.urlretrieve(url, destination)
             except Exception as e:
-                print(f"[WARNING] Could not fetch {url}: {e}")
-
-    # Extract missing ImGui headers if src/imgui is empty
-    if os.path.exists("external_deps/imgui_src.zip") and not os.path.exists("src/imgui/imgui.h"):
-        print("[EXTRACT] Extracting Dear ImGui source into src/imgui...")
-        os.makedirs("src/imgui", exist_ok=True)
-        with zipfile.ZipFile("external_deps/imgui_src.zip", "r") as zip_ref:
-            for member in zip_ref.namelist():
-                if member.endswith((".cpp", ".h")) and "examples" not in member:
-                    filename = os.path.basename(member)
-                    if filename:
-                        with zip_ref.open(member) as source, open(os.path.join("src/imgui", filename), "wb") as target:
-                            shutil.copyfileobj(source, target)
+                pass
 
 def setup_headers_and_mocks():
     print("[SETUP] Injecting standard headers and creating mock environment...")
@@ -50,86 +32,14 @@ def setup_headers_and_mocks():
     os.makedirs("include/SDL2", exist_ok=True)
     os.makedirs("src/saturn/imgui", exist_ok=True)
 
-    ultratypes = """#ifndef ULTRATYPES_H
-#define ULTRATYPES_H
-#include 
-#define NON_MATCHING 1
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned int u32;
-typedef unsigned long long u64;
-typedef signed char s8;
-typedef short s16;
-typedef int s32;
-typedef long long s64;
-typedef float f32;
-typedef double f64;
-#endif
-"""
     with open("include/PR/ultratypes.h", "w") as f:
-        f.write(ultratypes)
+        f.write("#ifndef ULTRATYPES_H\n#define ULTRATYPES_H\n#include \n#define NON_MATCHING 1\ntypedef unsigned char u8;\ntypedef unsigned short u16;\ntypedef unsigned int u32;\ntypedef unsigned long long u64;\ntypedef signed char s8;\ntypedef short s16;\ntypedef int s32;\ntypedef long long s64;\ntypedef float f32;\ntypedef double f64;\n#endif\n")
 
-    sdl_header = """#ifndef SDL_H
-#define SDL_H
-#include 
-typedef unsigned int Uint32;
-typedef unsigned char Uint8;
-typedef unsigned short Uint16;
-typedef int Sint32;
-typedef int SDL_bool;
-typedef int SDL_Keycode;
-
-typedef struct SDL_Keysym {
-    SDL_Keycode sym;
-} SDL_Keysym;
-
-typedef struct SDL_KeyboardEvent {
-    SDL_Keysym keysym;
-} SDL_KeyboardEvent;
-
-typedef struct SDL_MouseMotionEvent {
-    Sint32 xrel;
-    Sint32 yrel;
-} SDL_MouseMotionEvent;
-
-typedef union SDL_Event {
-    Uint32 type;
-    SDL_KeyboardEvent key;
-    SDL_MouseMotionEvent motion;
-} SDL_Event;
-
-typedef int SDL_Scancode;
-
-#define SDL_KEYDOWN 0x300
-#define SDL_MOUSEMOTION 0x400
-#define SDLK_m 'm'
-#define SDLK_n 'n'
-#define SDL_WINDOWPOS_CENTERED 0x2FFF0000
-#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS "SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-const char* SDL_GetScancodeName(SDL_Scancode scancode);
-void SDL_SetWindowSize(void* window, int w, int h);
-void SDL_SetWindowPosition(void* window, int x, int y);
-SDL_bool SDL_SetHint(const char* name, const char* value);
-void SDL_Delay(Uint32 ms);
-#ifdef __cplusplus
-}
-#endif
-#endif
-"""
     with open("include/SDL2/SDL.h", "w") as f:
-        f.write(sdl_header)
+        f.write("#ifndef SDL_H\n#define SDL_H\n#include \ntypedef unsigned int Uint32;\ntypedef unsigned char Uint8;\ntypedef unsigned short Uint16;\ntypedef int Sint32;\ntypedef int SDL_bool;\ntypedef int SDL_Keycode;\ntypedef struct SDL_Keysym { SDL_Keycode sym; } SDL_Keysym;\ntypedef struct SDL_KeyboardEvent { SDL_Keysym keysym; } SDL_KeyboardEvent;\ntypedef struct SDL_MouseMotionEvent { Sint32 xrel; Sint32 yrel; } SDL_MouseMotionEvent;\ntypedef union SDL_Event { Uint32 type; SDL_KeyboardEvent key; SDL_MouseMotionEvent motion; } SDL_Event;\ntypedef int SDL_Scancode;\n#define SDL_KEYDOWN 0x300\n#define SDL_MOUSEMOTION 0x400\n#define SDLK_m 'm'\n#define SDLK_n 'n'\n#define SDL_WINDOWPOS_CENTERED 0x2FFF0000\n#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS \"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS\"\n#ifdef __cplusplus\nextern \"C\" {\n#endif\nconst char* SDL_GetScancodeName(SDL_Scancode scancode);\nvoid SDL_SetWindowSize(void* window, int w, int h);\nvoid SDL_SetWindowPosition(void* window, int x, int y);\nSDL_bool SDL_SetHint(const char* name, const char* value);\nvoid SDL_Delay(Uint32 ms);\n#ifdef __cplusplus\n}\n#endif\n#endif\n")
 
-    gbi_header = """#ifndef GBI_H
-#define GBI_H
-#define G_TRI2 0xb1
-#endif
-"""
     with open("include/PR/gbi.h", "w") as f:
-        f.write(gbi_header)
+        f.write("#ifndef GBI_H\n#define GBI_H\n#define G_TRI2 0xb1\n#endif\n")
 
     plist_data = {
         "CFBundleDevelopmentRegion": "en",
@@ -146,43 +56,21 @@ void SDL_Delay(Uint32 ms);
     with open("Info.plist", "wb") as f:
         plistlib.dump(plist_data, f)
 
-def patch_missing_includes():
-    print("[PATCH] Injecting stddef.h, SDL.h, and gbi.h into source files...")
-    
-    headers_to_fix = ["include/PR/os_cache.h", "include/PR/os_pi.h"]
-    for header in headers_to_fix:
-        if os.path.exists(header):
-            with open(header, "r") as f:
-                content = f.read()
-            if "" not in content:
-                with open(header, "w") as f:
-                    f.write("#include \n" + content)
-
-    machinima_cpp = "src/saturn/imgui/saturn_imgui_machinima.cpp"
-    if os.path.exists(machinima_cpp):
-        with open(machinima_cpp, "r") as f:
-            content = f.read()
-        
-        injections = ""
-        if "" not in content:
-            injections += "#include \n"
-        if "SDL.h" not in content:
-            injections += "#include \n"
-        if "gbi.h" not in content:
-            injections += "#include \n"
-
-        if injections:
-            with open(machinima_cpp, "w") as f:
-                f.write(injections + content)
-
 def build_xcodegen_and_run():
     import yaml
-    print("[XCODEGEN] Generating project.yml...")
+    print("[XCODEGEN] Generating iOS project.yml (Excluding Windows/DirectX)...")
     sources = []
+    
+    # Exclusions to prevent DirectX and Windows Audio from breaking the iOS build
+    platform_exclusions = ['dxsdk', 'direct3d', 'd3d11', 'd3d12', 'wgl', 'glx', 'wasapi', 'alsa', 'wiiu']
+    
     for root, _, files in os.walk(os.getcwd()):
-        if any(x in root for x in ['build', '.git', 'DerivedData', 'Payload', 'external_deps']):
+        if any(x in root.lower() for x in ['build', '.git', 'deriveddata', 'payload', 'external_deps'] + platform_exclusions):
             continue
         for file in files:
+            if any(x in file.lower() for x in platform_exclusions):
+                continue
+                
             ext = os.path.splitext(file)[1].lower()
             if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
                 rel_path = os.path.relpath(os.path.join(root, file), os.getcwd())
@@ -228,5 +116,4 @@ if __name__ == "__main__":
     self_install_deps()
     fetch_external_assets_and_ipas()
     setup_headers_and_mocks()
-    patch_missing_includes()
     build_xcodegen_and_run()
