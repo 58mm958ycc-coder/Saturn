@@ -37,4 +37,4 @@
 
 In case you feel this project deserves some extra love, check out my Ko-fi-
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/J3J05B5WR)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/jjplays64)
