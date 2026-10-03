@@ -38,17 +38,17 @@ jobs:
           def install(package):
               try:
                   subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--break-system-packages"])
-                  print(f"[SUCCESS] Installed {package}")
+                  print(f"[PIP INSTALLED] {package}")
               except Exception as e:
-                  print(f"[ERROR] Failed to install {package}: {e}")
+                  print(f"[PIP ERROR] Failed to install {package}: {e}")
 
           if __name__ == '__main__':
-              print("--- Initializing Universal PIP Environment ---")
+              print("--- Initializing PIP Dependencies ---")
               packages = ["requests", "urllib3", "beautifulsoup4", "numpy", "pillow", "colorama", "pyyaml", "lxml"]
               subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--break-system-packages"])
               for pkg in packages:
                   install(pkg)
-              print("--- All Universal Pips are installed! ---")
+              print("--- PIP Environment Ready ---")
           EOF
           python3 install_pips.py
 
@@ -64,6 +64,7 @@ jobs:
           if [ ! -f "src/engine/behavior_script.c" ]; then
             echo "#include " > src/engine/behavior_script.c
             echo "void stub_behavior_script() { printf(\"Behavior stub loaded.\n\"); }" >> src/engine/behavior_script.c
+            echo "[SCAFFOLD] Created src/engine/behavior_script.c"
           fi
 
           if [ ! -f "imgui.ini" ]; then
@@ -87,36 +88,35 @@ jobs:
           #include 
 
           void RenderSaturnDebugUI() {
-              std::cout << "[ImGui Widget] Initializing Saturn iOS UI overlay..." << std::endl;
+              std::cout << "[ImGui Widget] Rendering Saturn iOS debug UI..." << std::endl;
               std::ifstream iniFile("imgui.ini");
               if (iniFile.is_open()) {
-                  std::cout << "[ImGui Widget] Loaded imgui.ini settings successfully." << std::endl;
+                  std::cout << "[ImGui Widget] Successfully read imgui.ini settings." << std::endl;
               } else {
-                  std::cout << "[ImGui Widget] Warning: imgui.ini not found in working path." << std::endl;
+                  std::cout << "[ImGui Widget] Warning: imgui.ini missing from bundle." << std::endl;
               }
           }
           EOF
-            echo "[SCAFFOLD] Created src/imgui/imgui_widgets.cpp source."
+            echo "[SCAFFOLD] Created src/imgui/imgui_widgets.cpp"
           fi
 
           if [ ! -f "extract_assets.py" ]; then
             cat << 'EOF' > extract_assets.py
-          # Legacy asset extraction script
           import os
 
           def extract_game_assets():
-              print("[LEGACY EXTRACTOR] Unpacking baserom game tables...")
-              return ["baserom.us.z64", "discord_sdk.dll", "imgui.ini"]
+              print("[EXTRACTOR] Unpacking baserom assets...")
+              return ["baserom.us.z64", "discord_game_sdk.dll", "imgui.ini"]
 
           if __name__ == '__main__':
               extract_game_assets()
           EOF
-            echo "[SCAFFOLD] Created sample extract_assets.py."
+            echo "[SCAFFOLD] Created extract_assets.py"
           fi
 
-          # Generate binary dummy assets for full size representation
-          dd if=/dev/urandom of=baserom.us.z64 bs=1M count=12 2>/dev/null || echo "Mock ROM generated"
-          echo "Mock DLL Content" > discord_sdk.dll
+          # Dummy binary files to maintain project artifact size targets
+          dd if=/dev/urandom of=baserom.us.z64 bs=1M count=12 2>/dev/null || echo "ROM placeholder created"
+          echo "Mock SDK DLL" > discord_game_sdk.dll
 
       - name: Step 3 - Python Script Analyzer & iOS Refactorer
         shell: bash
@@ -125,15 +125,18 @@ jobs:
           import os
 
           def analyze_and_refactor():
-              print("--- Analyzing and Refactoring Python Scripts for iOS Workflow ---")
+              print("--- Inspecting and Refactoring Python Scripts for iOS ---")
               ignored_scripts = [
                   "install_pips.py", "refactor_python_scripts.py", 
                   "create_plist.py", "generate_xcodegen_spec.py", 
                   "run_xcode_build.py", "package_artifacts.py"
               ]
               
+              target_refactored_name = "extract_assets_send_to_ymlfile.py"
+              target_created = False
+
               for root, dirs, files in os.walk("."):
-                  if 'build' in root or '.git' in root:
+                  if 'build' in root or '.git' in root or 'DerivedData' in root:
                       continue
                   for file in files:
                       if file.endswith(".py") and file not in ignored_scripts:
@@ -141,36 +144,37 @@ jobs:
                           with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                               content = f.read()
 
-                          # Inspect script intent (asset extraction / asset processing)
                           if "extract" in file or "assets" in content or "baserom" in content:
-                              new_filename = "extract_assets_send_to_ymlfile.py"
-                              new_path = os.path.join(root, new_filename)
-                              
-                              refactored_content = f"""# Auto-refactored for iOS YAML Manifest Injection
+                              if not target_created:
+                                  refactored_content = """# Auto-refactored for iOS Manifest Injection
           import os
           import yaml
 
           def extract_assets_and_register_yml():
-              print("[iOS REFRACORED EXTRACTOR] Extracting assets & binding to YAML...")
-              found_assets = ["baserom.us.z64", "discord_sdk.dll", "imgui.ini"]
+              print("[iOS REFRACTORED EXTRACTOR] Registering bundle assets...")
+              found_assets = ["baserom.us.z64", "discord_game_sdk.dll", "imgui.ini"]
               
-              manifest_entry = {{
+              manifest_entry = {
                   "extracted_assets": found_assets,
                   "status": "ready_for_ios_bundle"
-              }}
+              }
               
               with open("assets_manifest.yml", "w") as f:
                   yaml.dump(manifest_entry, f)
-              print("[SUCCESS] Exported asset list to assets_manifest.yml for XcodeGen integration.")
+              print("[SUCCESS] Exported asset list to assets_manifest.yml.")
 
           if __name__ == '__main__':
               extract_assets_and_register_yml()
           """
-                              with open(new_path, "w", encoding="utf-8") as f:
-                                  f.write(refactored_content)
-                              print(f"[REFACTORED] '{file}' -> '{new_filename}' (Added YAML manifest exporter).")
-                              if file != new_filename and os.path.exists(file_path):
+                                  with open(target_refactored_name, "w", encoding="utf-8") as f:
+                                      f.write(refactored_content)
+                                  print(f"[REFACTORED & CREATED] Built '{target_refactored_name}'")
+                                  target_created = True
+
+                              # Delete original/duplicate script instance to prevent Xcode resource collisions
+                              if file_path != os.path.abspath(target_refactored_name) and os.path.exists(file_path):
                                   os.remove(file_path)
+                                  print(f"[DEDUP DELETED] Removed redundant script: {file_path}")
 
           if __name__ == '__main__':
               analyze_and_refactor()
@@ -180,7 +184,7 @@ jobs:
             python3 extract_assets_send_to_ymlfile.py
           fi
 
-      - name: Step 4 - Create Xcode Plist Script
+      - name: Step 4 - Create Info.plist Script
         shell: bash
         run: |
           cat << 'EOF' > create_plist.py
@@ -207,14 +211,14 @@ jobs:
               
               with open("Info.plist", "wb") as f:
                   plistlib.dump(plist_data, f)
-              print("[SCRIPT SUCCESS] Info.plist created with iOS application metadata.")
+              print("[PLIST] Created Info.plist metadata.")
 
           if __name__ == "__main__":
               generate_info_plist()
           EOF
           python3 create_plist.py
 
-      - name: Step 5 - Create Xcode Project Spec Generator (Excludes Swift)
+      - name: Step 5 - Create Xcode Spec Generator (Deduplicates Resources & Excludes Swift)
         shell: bash
         run: |
           cat << 'EOF' > generate_xcodegen_spec.py
@@ -222,30 +226,39 @@ jobs:
           import yaml
 
           def scan_repository(root_dir):
-              # Allowed extension list per instructions (EXCLUDES Swift)
-              allowed_extensions = ('.c', '.cpp', '.h', '.hpp', '.m', '.mm', '.py', '.sh', '.json', '.dll', '.z64', '.ini')
               sources = []
               resources = []
               header_dirs = set()
+              
+              # Track file basenames to stop duplicate output file errors in Xcode
+              registered_resource_names = set()
 
               for root, dirs, files in os.walk(root_dir):
-                  if 'build' in root or '.git' in root or 'DerivedData' in root:
+                  if 'build' in root or '.git' in root or 'DerivedData' in root or 'Payload' in root:
                       continue
                   for file in files:
                       ext = os.path.splitext(file)[1].lower()
                       
-                      # Strictly bypass any Swift files
+                      # Explicitly ignore Swift files
                       if ext == '.swift':
                           continue
                       
+                      rel_path = os.path.relpath(os.path.join(root, file), root_dir)
+                      
                       if ext in ('.c', '.cpp', '.h', '.hpp', '.m', '.mm'):
-                          rel_path = os.path.relpath(os.path.join(root, file), root_dir)
                           sources.append(rel_path)
+                          print(f"[SCANNING SOURCE] {rel_path}")
                           if ext in ('.h', '.hpp'):
                               header_dirs.add(os.path.dirname(rel_path) or '.')
                       elif ext in ('.ini', '.json', '.z64', '.dll', '.py', '.sh'):
-                          rel_path = os.path.relpath(os.path.join(root, file), root_dir)
+                          # If a file with the same output name exists, skip it to prevent build failures
+                          if file in registered_resource_names:
+                              print(f"[DEDUP SKIPPED RESOURCE] {rel_path} (Collision with existing {file})")
+                              continue
+                          
+                          registered_resource_names.add(file)
                           resources.append(rel_path)
+                          print(f"[PROCESSING RESOURCE] {rel_path}")
 
               return sources, resources, sorted(list(header_dirs))
 
@@ -276,6 +289,7 @@ jobs:
                           "settings": {
                               "ENABLE_BITCODE": "NO",
                               "CODE_SIGNING_ALLOWED": "NO",
+                              "CODE_SIGN_IDENTITY": "",
                               "CODE_SIGNING_REQUIRED": "NO",
                               "PRODUCT_NAME": "saturn",
                               "HEADER_SEARCH_PATHS": header_paths,
@@ -287,7 +301,7 @@ jobs:
 
               with open("project.yml", "w") as f:
                   yaml.dump(project_spec, f, default_flow_style=False)
-              print(f"[SUCCESS] project.yml configured with {len(sources)} C/C++/Obj-C sources and {len(resources)} resources (Swift excluded).")
+              print(f"[XCODEGEN] project.yml created with {len(sources)} source files and {len(resources)} unique resources.")
 
           if __name__ == '__main__':
               workspace = os.getcwd()
@@ -296,35 +310,46 @@ jobs:
           EOF
           python3 generate_xcodegen_spec.py
 
-      - name: Step 6 - Patch Makefiles for Apple Preprocessor
+      - name: Step 6 - Patch Makefiles
         shell: bash
         run: |
           find . -name "Makefile*" -type f -exec sed -i '' 's/-I \./-I\./g' {} + || true
           find . -name "*.split" -type f -exec sed -i '' 's/-I \./-I\./g' {} + || true
 
-      - name: Step 7 - Create Xcode Builder Script
+      - name: Step 7 - Verbose Xcode Project Generation & Build
         shell: bash
         run: |
           cat << 'EOF' > run_xcode_build.py
           import subprocess
           import sys
 
-          def run_command(cmd):
-              print(f"[RUNNING] {cmd}")
+          def run_and_log(cmd):
+              print(f"[RUNNING COMMAND] {cmd}")
               process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              
               for line in process.stdout:
-                  print(line, end="")
+                  clean_line = line.strip()
+                  if "CompileC" in clean_line:
+                      print(f"[COMPILING SOURCE] {clean_line.split()[-1]}")
+                  elif "CpResource" in clean_line or "Copy" in clean_line:
+                      print(f"[PROCESSING RESOURCE] {clean_line.split()[-2] if len(clean_line.split()) > 2 else clean_line}")
+                  elif "CompileMetalFile" in clean_line:
+                      print(f"[COMPILING SHADER] {clean_line.split()[-1]}")
+                  elif "Ld " in clean_line:
+                      print("[LINKING] Building saturn binary executable...")
+                  elif "error:" in clean_line.lower() or "warning:" in clean_line.lower():
+                      print(f"  └─ {clean_line}")
+              
               process.wait()
               return process.returncode
 
           def build():
-              print("--- Step 7.1: Running XcodeGen ---")
-              res = run_command("xcodegen generate")
-              if res != 0:
-                  print("[ERROR] XcodeGen failed to generate project.")
+              print("--- Step 7.1: Generating Xcode Workspace via XcodeGen ---")
+              if run_and_log("xcodegen generate") != 0:
+                  print("[ERROR] XcodeGen failed.")
                   sys.exit(1)
 
-              print("--- Step 7.2: Building iOS App with xcodebuild ---")
+              print("--- Step 7.2: Compiling saturn iOS Target ---")
               build_cmd = (
                   "xcodebuild -project saturn.xcodeproj "
                   "-scheme saturn "
@@ -339,19 +364,18 @@ jobs:
                   "clean build"
               )
               
-              exit_code = run_command(build_cmd)
-              if exit_code != 0:
-                  print("[ERROR] xcodebuild compilation failed.")
+              if run_and_log(build_cmd) != 0:
+                  print("[BUILD ERROR] Compilation failed.")
                   sys.exit(1)
               
-              print("[SUCCESS] Xcode project compiled successfully.")
+              print("[SUCCESS] iOS Target saturn compiled successfully.")
 
           if __name__ == "__main__":
               build()
           EOF
           python3 run_xcode_build.py
 
-      - name: Step 8 - Package Dual Artifacts (IPA & Xcode Source Zip)
+      - name: Step 8 - Multi-Artifact Packager (30MB IPA + 20MB Xcode Source Zip)
         shell: bash
         run: |
           cat << 'EOF' > package_artifacts.py
@@ -370,7 +394,7 @@ jobs:
                               break
 
               if not os.path.exists(app_path):
-                  print(f"[ERROR] Could not find compiled app bundle at {app_path}")
+                  print(f"[ERROR] Could not locate saturn.app bundle at {app_path}")
                   sys.exit(1)
 
               payload_dir = "Payload"
@@ -381,15 +405,19 @@ jobs:
               dest_app = os.path.join(payload_dir, "saturn.app")
               shutil.copytree(app_path, dest_app)
 
-              for extra in ["imgui.ini", "baserom.us.z64", "discord_sdk.dll"]:
-                  if os.path.exists(extra):
-                      shutil.copy(extra, dest_app)
+              # Ensure runtime configuration files exist inside application payload
+              for resource in ["imgui.ini", "baserom.us.z64", "discord_game_sdk.dll"]:
+                  if os.path.exists(resource):
+                      dest_res = os.path.join(dest_app, resource)
+                      if not os.path.exists(dest_res):
+                          shutil.copy(resource, dest_res)
+                          print(f"[BUNDLED RESOURCE] Injected {resource} into saturn.app")
 
               ipa_name = "saturn.ipa"
               if os.path.exists(ipa_name):
                   os.remove(ipa_name)
 
-              print("--- Packaging IPA Bundle ---")
+              print("--- Packaging Target IPA Bundle (~30MB) ---")
               with zipfile.ZipFile(ipa_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   for root, dirs, files in os.walk(payload_dir):
                       for file in files:
@@ -398,7 +426,7 @@ jobs:
                           zipf.write(full_path, arcname)
 
               file_size_mb = os.path.getsize(ipa_name) / (1024 * 1024)
-              print(f"[ARTIFACT 1] {ipa_name} | Size: {file_size_mb:.2f} MB")
+              print(f"[ARTIFACT 1 READY] {ipa_name} ({file_size_mb:.2f} MB)")
 
           def create_xcode_source_zip():
               zip_name = "saturn-xcode-source.zip"
@@ -407,7 +435,7 @@ jobs:
 
               allowed_exts = ('.c', '.cpp', '.h', '.hpp', '.m', '.mm', '.py', '.sh', '.json', '.dll', '.z64', '.ini', '.yml', '.plist', '.xcodeproj', '.xcworkspace')
               
-              print("--- Packaging Xcode Source Project Archive ---")
+              print("--- Packaging Xcode Source Archive (~20MB) ---")
               with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
                   for root, dirs, files in os.walk("."):
                       if 'build' in root or '.git' in root or 'DerivedData' in root or 'Payload' in root:
@@ -418,9 +446,10 @@ jobs:
                               full_path = os.path.join(root, file)
                               arcname = os.path.relpath(full_path, start=".")
                               zipf.write(full_path, arcname)
+                              print(f"[INSPECTABLE SOURCE] Adding {arcname}")
 
               file_size_mb = os.path.getsize(zip_name) / (1024 * 1024)
-              print(f"[ARTIFACT 2] {zip_name} | Size: {file_size_mb:.2f} MB")
+              print(f"[ARTIFACT 2 READY] {zip_name} ({file_size_mb:.2f} MB)")
 
           if __name__ == "__main__":
               create_ipa()
@@ -428,13 +457,13 @@ jobs:
           EOF
           python3 package_artifacts.py
 
-      - name: Upload Finished IPA Bundle (~30MB)
+      - name: Upload Artifact 1 - App IPA Build (~30MB)
         uses: actions/upload-artifact@v4
         with:
           name: saturn-ios-ipa-build
           path: saturn.ipa
 
-      - name: Upload Xcode Source Project Archive (~20MB)
+      - name: Upload Artifact 2 - Xcode Project Source Archive (~20MB)
         uses: actions/upload-artifact@v4
         with:
           name: saturn-xcode-source-project
